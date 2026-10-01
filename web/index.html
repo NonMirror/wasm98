@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windows 98</title>
+<link rel="stylesheet" href="vendor/98css/98.css">
+<link rel="stylesheet" href="css/shell.css">
+<link rel="icon" href="assets/logo/winflag16.png">
+</head>
+<body>
+<noscript>This desktop needs JavaScript and WebAssembly.</noscript>
+<div id="loadfail" style="display:none;position:absolute;inset:0;background:#000080;color:#fff;
+     font:13px 'Lucida Console',monospace;padding:40px">
+  A fatal exception 0E has occurred. kernel.wasm failed to load.
+</div>
+
+<!-- the kernel and the shell ------------------------------------------------->
+<script src="js/kernel.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/hv.js"></script>
+
+<!-- applications (each registers itself with W98.registerApp) ---------------->
+<script src="js/apps/explorer.js"></script>
+<script src="js/apps/cmd.js"></script>
+<script src="js/apps/control.js"></script>
+<script src="js/apps/taskmgr.js"></script>
+<script src="js/apps/minesweeper.js"></script>
+<script src="js/apps/shellapps.js"></script>
+<script src="js/apps/notepad.js"></script>
+<script src="js/apps/calculator.js"></script>
+<script src="js/apps/charmap.js"></script>
+<script src="js/apps/mplayer.js"></script>
+<script src="js/apps/paint.js"></script>
+<script src="js/apps/solitaire.js"></script>
+<script src="js/apps/freecell.js"></script>
+<script src="js/apps/jezzball.js"></script>
+<script src="js/apps/pinball.js"></script>
+<script src="js/apps/dosgame.js"></script>
+<script src="js/apps/vm.js"></script>
+<script src="js/apps/hvmanager.js"></script>
+<script src="js/apps/vmconsole.js"></script>
+
+<!-- the desktop boots last, once every app has registered -------------------->
+<script src="js/desk.js"></script>
+</body>
+</html>

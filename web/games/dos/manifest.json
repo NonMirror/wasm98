@@ -1,0 +1,68 @@
+[
+  {
+    "id": "doom",
+    "title": "DOOM (Shareware)",
+    "publisher": "id Software",
+    "year": 1993,
+    "file": "/games/dos/doom.jsdos",
+    "size": 5539791,
+    "license": "Shareware - freely redistributable",
+    "note": "DOOM shareware v1.9, episode 1 'Knee-Deep in the Dead'. Shipped byte-for-byte as published by the js-dos project (cdn.dos.zone/custom/dos/doom.jsdos), including its DOSBox config - no runtime download.",
+    "controls": "Arrows move/turn, Ctrl fire, Space open/use, Shift run, 1-7 weapons, Esc menu, Enter select. Press a key at the title screen."
+  },
+  {
+    "id": "wolf3d",
+    "title": "Wolfenstein 3D (Shareware)",
+    "publisher": "id Software / Apogee Software",
+    "year": 1992,
+    "file": "/games/dos/wolf3d.jsdos",
+    "size": 667889,
+    "license": "Shareware - freely redistributable",
+    "note": "Wolfenstein 3D shareware v1.4, episode 1 'Escape from Wolfenstein'. Original WOLF3D.EXE + .WL1 data packed unchanged (source archive: archive.org item wolf3dsw) with an added .jsdos/dosbox.conf.",
+    "controls": "Arrows move/turn, Ctrl fire, Space open/use, Shift run, 1-4 weapons. The v1.4 memory/sound screen appears first: pick a sound device and press a key."
+  },
+  {
+    "id": "duke3d",
+    "title": "Duke Nukem 3D (Shareware)",
+    "publisher": "3D Realms / Apogee Software",
+    "year": 1996,
+    "file": "/games/dos/duke3d.jsdos",
+    "size": 5861600,
+    "license": "Shareware - freely redistributable",
+    "note": "Duke Nukem 3D shareware v1.3d, episode 1 'L.A. Meltdown'. DN3DSW13.SHR self-extractor from archive.org item 3dduke13SW unpacked unchanged (DUKE3D.EXE, DUKE3D.GRP, LICENSE.TXT, ...), plus .jsdos/dosbox.conf and a DUKE3D.CFG for the emulated Sound Blaster 16 (without it the engine quits with 'Please run SETUP.EXE').",
+    "controls": "Arrows move/turn, Ctrl fire, Space open/use, A jump, Shift run, 1-9 weapons, Tab map, Esc menu."
+  },
+  {
+    "id": "keen4",
+    "title": "Commander Keen 4: Secret of the Oracle (Shareware)",
+    "publisher": "id Software / Apogee Software",
+    "year": 1991,
+    "file": "/games/dos/keen4.jsdos",
+    "size": 557071,
+    "license": "Shareware - freely redistributable",
+    "note": "Commander Keen 4 shareware episode (Goodbye Galaxy, episode 1, v1.0). KEEN4E.EXE and .CK4 data from archive.org Software Library item msdos_Commander_Keen_4_-_Secret_of_the_Oracle_1991, with an added .jsdos/dosbox.conf.",
+    "controls": "Press any key at the hardware-detection screen, then: arrows move, Ctrl jump, Alt pogo stick, Space/Enter status, F1 help."
+  },
+  {
+    "id": "biomenace",
+    "title": "Bio Menace (Shareware)",
+    "publisher": "Apogee Software (Jim Norwood)",
+    "year": 1993,
+    "file": "/games/dos/biomenace.jsdos",
+    "size": 623125,
+    "license": "Shareware - freely redistributable",
+    "note": "Bio Menace shareware v1.1, episode 1 'Dr. Mangle's Lab'. Original BMENACE1.EXE + .BM1 data and LICENSE.DOC from archive.org item biomenace1-sw, with an added .jsdos/dosbox.conf.",
+    "controls": "Press any key at the hardware-detection screen, then: arrows move, Ctrl jump, Alt fire weapon, Space/Enter status, F1 help."
+  },
+  {
+    "id": "prince",
+    "title": "Prince of Persia (1990)",
+    "publisher": "Broderbund / Jordan Mechner",
+    "year": 1990,
+    "file": "/games/dos/prince.jsdos",
+    "size": 370764,
+    "license": "Freeware release, as distributed by the js-dos project",
+    "note": "Prince of Persia DOS release shipped byte-for-byte as the js-dos project publishes it (cdn.dos.zone/custom/dos/prince.jsdos); included because the js-dos project distributes this bundle as freely redistributable.",
+    "controls": "Left/Right walk (hold to run), Up jump, Up+Left/Right careful step, Down crouch/pick up, Shift action (drink, open, fight), Esc menu."
+  }
+]

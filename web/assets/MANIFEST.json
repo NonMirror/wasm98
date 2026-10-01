@@ -1,0 +1,1205 @@
+{
+  "generated": "Windows 98 web desktop -- local asset set",
+  "icons": {
+    "my-computer": {
+      "file": "icons/my-computer.png",
+      "size": 32,
+      "source": "win98icons:computer-2"
+    },
+    "recycle-bin": {
+      "file": "icons/recycle-bin.png",
+      "size": 32,
+      "source": "win98icons:recycle_bin_empty-0"
+    },
+    "recycle-bin-full": {
+      "file": "icons/recycle-bin-full.png",
+      "size": 32,
+      "source": "win98icons:recycle_bin_full-0"
+    },
+    "folder": {
+      "file": "icons/folder.png",
+      "size": 32,
+      "source": "win98icons:directory_closed-0"
+    },
+    "folder-open": {
+      "file": "icons/folder-open.png",
+      "size": 32,
+      "source": "win98icons:directory_open_cabinet-1"
+    },
+    "floppy-3-5": {
+      "file": "icons/floppy-3-5.png",
+      "size": 32,
+      "source": "win98icons:floppy_drive_3_5-5"
+    },
+    "hard-disk": {
+      "file": "icons/hard-disk.png",
+      "size": 32,
+      "source": "win98icons:hard_disk_drive-0"
+    },
+    "cdrom": {
+      "file": "icons/cdrom.png",
+      "size": 32,
+      "source": "win98icons:cd_drive-5"
+    },
+    "network": {
+      "file": "icons/network.png",
+      "size": 32,
+      "source": "win98icons:network-0"
+    },
+    "control-panel": {
+      "file": "icons/control-panel.png",
+      "size": 32,
+      "source": "win98icons:directory_control_panel-4"
+    },
+    "printer": {
+      "file": "icons/printer.png",
+      "size": 32,
+      "source": "win98icons:printer-5"
+    },
+    "add-remove": {
+      "file": "icons/add-remove.png",
+      "size": 32,
+      "source": "win98icons:appwizard-2"
+    },
+    "modem": {
+      "file": "icons/modem.png",
+      "size": 32,
+      "source": "win98icons:modem-2"
+    },
+    "display": {
+      "file": "icons/display.png",
+      "size": 32,
+      "source": "win98icons:display_properties-2"
+    },
+    "sounds": {
+      "file": "icons/sounds.png",
+      "size": 32,
+      "source": "win98icons:loudspeaker_rays-0"
+    },
+    "mouse": {
+      "file": "icons/mouse.png",
+      "size": 32,
+      "source": "win98icons:mouse-1"
+    },
+    "keyboard": {
+      "file": "icons/keyboard.png",
+      "size": 32,
+      "source": "win98icons:keyboard-0"
+    },
+    "fonts": {
+      "file": "icons/fonts.png",
+      "size": 32,
+      "source": "win98icons:directory_fonts-4"
+    },
+    "datetime": {
+      "file": "icons/datetime.png",
+      "size": 32,
+      "source": "win98icons:time_and_date-0"
+    },
+    "system": {
+      "file": "icons/system.png",
+      "size": 32,
+      "source": "win98icons:computer_gear"
+    },
+    "dial-up": {
+      "file": "icons/dial-up.png",
+      "size": 32,
+      "source": "win98icons:conn_dialup"
+    },
+    "documents": {
+      "file": "icons/documents.png",
+      "size": 32,
+      "source": "win98icons:directory_open_file_mydocs-0"
+    },
+    "pictures": {
+      "file": "icons/pictures.png",
+      "size": 32,
+      "source": "win98icons:imagjpeg-1"
+    },
+    "programs": {
+      "file": "icons/programs.png",
+      "size": 32,
+      "source": "win98icons:file_program_group-0"
+    },
+    "find": {
+      "file": "icons/find.png",
+      "size": 32,
+      "source": "win98icons:search_file_2-0"
+    },
+    "help": {
+      "file": "icons/help.png",
+      "size": 32,
+      "source": "win98icons:help_book_small-0"
+    },
+    "run": {
+      "file": "icons/run.png",
+      "size": 32,
+      "source": "1j01/98:run-32x32.png"
+    },
+    "settings": {
+      "file": "icons/settings.png",
+      "size": 32,
+      "source": "win98icons:settings_gear-0"
+    },
+    "shutdown": {
+      "file": "icons/shutdown.png",
+      "size": 32,
+      "source": "win98icons:shut_down_normal-0"
+    },
+    "logoff": {
+      "file": "icons/logoff.png",
+      "size": 32,
+      "source": "1j01/98:logoff-32x32.png"
+    },
+    "notepad": {
+      "file": "icons/notepad.png",
+      "size": 32,
+      "source": "win98icons:notepad-1"
+    },
+    "paint": {
+      "file": "icons/paint.png",
+      "size": 32,
+      "source": "win98icons:paint_old-0"
+    },
+    "calculator": {
+      "file": "icons/calculator.png",
+      "size": 32,
+      "source": "win98icons:calculator-0"
+    },
+    "charmap": {
+      "file": "icons/charmap.png",
+      "size": 32,
+      "source": "win98icons:charmap-0"
+    },
+    "media-player": {
+      "file": "icons/media-player.png",
+      "size": 32,
+      "source": "win98icons:media_player-0"
+    },
+    "minesweeper": {
+      "file": "icons/minesweeper.png",
+      "size": 32,
+      "source": "win98icons:minesweeper-1"
+    },
+    "solitaire": {
+      "file": "icons/solitaire.png",
+      "size": 32,
+      "source": "win98icons:game_solitaire-0"
+    },
+    "freecell": {
+      "file": "icons/freecell.png",
+      "size": 32,
+      "source": "win98icons:game_freecell-0"
+    },
+    "pinball": {
+      "file": "icons/pinball.png",
+      "size": 32,
+      "source": "1j01/98:pinball-32x32.png"
+    },
+    "dos-prompt": {
+      "file": "icons/dos-prompt.png",
+      "size": 32,
+      "source": "win98icons:ms_dos-0"
+    },
+    "dos": {
+      "file": "icons/dos.png",
+      "size": 32,
+      "source": "win98icons:ms_dos_2-0"
+    },
+    "explorer": {
+      "file": "icons/explorer.png",
+      "size": 32,
+      "source": "win98icons:directory_explorer-2"
+    },
+    "ie": {
+      "file": "icons/ie.png",
+      "size": 32,
+      "source": "win98icons:msie2-0"
+    },
+    "outlook": {
+      "file": "icons/outlook.png",
+      "size": 32,
+      "source": "win98icons:outlook_express-0"
+    },
+    "task-manager": {
+      "file": "icons/task-manager.png",
+      "size": 32,
+      "source": "win98icons:computer_taskmgr-0"
+    },
+    "volume": {
+      "file": "icons/volume.png",
+      "size": 32,
+      "source": "win98icons:sndvol32_main-0"
+    },
+    "speaker": {
+      "file": "icons/speaker.png",
+      "size": 32,
+      "source": "win98icons:loudspeaker_wave-0"
+    },
+    "network-neighborhood": {
+      "file": "icons/network-neighborhood.png",
+      "size": 32,
+      "source": "win98icons:network_normal_two_pcs-0"
+    },
+    "briefcase": {
+      "file": "icons/briefcase.png",
+      "size": 32,
+      "source": "win98icons:briefcase-0"
+    },
+    "scheduled-tasks": {
+      "file": "icons/scheduled-tasks.png",
+      "size": 32,
+      "source": "win98icons:sched_tasks"
+    },
+    "web-folders": {
+      "file": "icons/web-folders.png",
+      "size": 32,
+      "source": "win98icons:directory_net_web-0"
+    },
+    "text-file": {
+      "file": "icons/text-file.png",
+      "size": 32,
+      "source": "win98icons:notepad_file-0"
+    },
+    "bmp-file": {
+      "file": "icons/bmp-file.png",
+      "size": 32,
+      "source": "win98icons:paint_file-2"
+    },
+    "exe-file": {
+      "file": "icons/exe-file.png",
+      "size": 32,
+      "source": "win98icons:executable-0"
+    },
+    "dll-file": {
+      "file": "icons/dll-file.png",
+      "size": 32,
+      "source": "win98icons:file_gears-0"
+    },
+    "wav-file": {
+      "file": "icons/wav-file.png",
+      "size": 32,
+      "source": "win98icons:loudspeaker_rays_green-0"
+    },
+    "ini-file": {
+      "file": "icons/ini-file.png",
+      "size": 32,
+      "source": "win98icons:notepad_file_gear-0"
+    },
+    "unknown-file": {
+      "file": "icons/unknown-file.png",
+      "size": 32,
+      "source": "win98icons:document-0"
+    },
+    "check": {
+      "file": "icons/check.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "error": {
+      "file": "icons/error.png",
+      "size": 32,
+      "source": "win98icons:msg_error-1"
+    },
+    "warning": {
+      "file": "icons/warning.png",
+      "size": 32,
+      "source": "win98icons:msg_warning-1"
+    },
+    "info": {
+      "file": "icons/info.png",
+      "size": 32,
+      "source": "win98icons:msg_information-1"
+    },
+    "question": {
+      "file": "icons/question.png",
+      "size": 32,
+      "source": "win98icons:msg_question-1"
+    },
+    "hourglass": {
+      "file": "icons/hourglass.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "checkbox": {
+      "file": "icons/checkbox.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "radio": {
+      "file": "icons/radio.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "arrow-right": {
+      "file": "icons/arrow-right.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "arrow-down": {
+      "file": "icons/arrow-down.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "chevron": {
+      "file": "icons/chevron.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "jezzball": {
+      "file": "icons/jezzball.png",
+      "size": 32,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    }
+  },
+  "icons16": {
+    "my-computer": {
+      "file": "icons16/my-computer.png",
+      "size": 16,
+      "source": "win98icons:computer-0"
+    },
+    "recycle-bin": {
+      "file": "icons16/recycle-bin.png",
+      "size": 16,
+      "source": "win98icons:recycle_bin_empty-1"
+    },
+    "recycle-bin-full": {
+      "file": "icons16/recycle-bin-full.png",
+      "size": 16,
+      "source": "win98icons:recycle_bin_full-1"
+    },
+    "folder": {
+      "file": "icons16/folder.png",
+      "size": 16,
+      "source": "win98icons:directory_closed-2"
+    },
+    "folder-open": {
+      "file": "icons16/folder-open.png",
+      "size": 16,
+      "source": "win98icons:directory_open_cabinet-0"
+    },
+    "floppy-3-5": {
+      "file": "icons16/floppy-3-5.png",
+      "size": 16,
+      "source": "win98icons:floppy_drive_3_5-4"
+    },
+    "hard-disk": {
+      "file": "icons16/hard-disk.png",
+      "size": 16,
+      "source": "win98icons:hard_disk_drive-1"
+    },
+    "cdrom": {
+      "file": "icons16/cdrom.png",
+      "size": 16,
+      "source": "win98icons:cd_drive-4"
+    },
+    "network": {
+      "file": "icons16/network.png",
+      "size": 16,
+      "source": "win98icons:network-1"
+    },
+    "control-panel": {
+      "file": "icons16/control-panel.png",
+      "size": 16,
+      "source": "win98icons:directory_control_panel-5"
+    },
+    "printer": {
+      "file": "icons16/printer.png",
+      "size": 16,
+      "source": "win98icons:printer-4"
+    },
+    "add-remove": {
+      "file": "icons16/add-remove.png",
+      "size": 16,
+      "source": "win98icons:appwizard-0"
+    },
+    "modem": {
+      "file": "icons16/modem.png",
+      "size": 16,
+      "source": "win98icons:modem-0"
+    },
+    "display": {
+      "file": "icons16/display.png",
+      "size": 16,
+      "source": "win98icons:display_properties-0"
+    },
+    "sounds": {
+      "file": "icons16/sounds.png",
+      "size": 16,
+      "source": "win98icons:loudspeaker_rays-1"
+    },
+    "mouse": {
+      "file": "icons16/mouse.png",
+      "size": 16,
+      "source": "win98icons:mouse-2"
+    },
+    "keyboard": {
+      "file": "icons16/keyboard.png",
+      "size": 16,
+      "source": "win98icons:keyboard-2"
+    },
+    "fonts": {
+      "file": "icons16/fonts.png",
+      "size": 16,
+      "source": "win98icons:directory_fonts-3"
+    },
+    "datetime": {
+      "file": "icons16/datetime.png",
+      "size": 16,
+      "source": "win98icons:time_and_date-1"
+    },
+    "system": {
+      "file": "icons16/system.png",
+      "size": 16,
+      "source": "scaled NEAREST from 32x32 (no 16x16 source)"
+    },
+    "dial-up": {
+      "file": "icons16/dial-up.png",
+      "size": 16,
+      "source": "scaled NEAREST from 32x32 (no 16x16 source)"
+    },
+    "documents": {
+      "file": "icons16/documents.png",
+      "size": 16,
+      "source": "win98icons:directory_open_file_mydocs-2"
+    },
+    "pictures": {
+      "file": "icons16/pictures.png",
+      "size": 16,
+      "source": "win98icons:imagjpeg-0"
+    },
+    "programs": {
+      "file": "icons16/programs.png",
+      "size": 16,
+      "source": "win98icons:file_program_group-1"
+    },
+    "find": {
+      "file": "icons16/find.png",
+      "size": 16,
+      "source": "win98icons:search_file_2-1"
+    },
+    "help": {
+      "file": "icons16/help.png",
+      "size": 16,
+      "source": "win98icons:help_book_small-1"
+    },
+    "run": {
+      "file": "icons16/run.png",
+      "size": 16,
+      "source": "1j01/98:run-16x16.png"
+    },
+    "settings": {
+      "file": "icons16/settings.png",
+      "size": 16,
+      "source": "win98icons:settings_gear-1"
+    },
+    "shutdown": {
+      "file": "icons16/shutdown.png",
+      "size": 16,
+      "source": "win98icons:shut_down_normal-1"
+    },
+    "logoff": {
+      "file": "icons16/logoff.png",
+      "size": 16,
+      "source": "1j01/98:logoff-16x16.png"
+    },
+    "notepad": {
+      "file": "icons16/notepad.png",
+      "size": 16,
+      "source": "win98icons:notepad-0"
+    },
+    "paint": {
+      "file": "icons16/paint.png",
+      "size": 16,
+      "source": "win98icons:paint_old-1"
+    },
+    "calculator": {
+      "file": "icons16/calculator.png",
+      "size": 16,
+      "source": "win98icons:calculator-1"
+    },
+    "charmap": {
+      "file": "icons16/charmap.png",
+      "size": 16,
+      "source": "win98icons:charmap-1"
+    },
+    "media-player": {
+      "file": "icons16/media-player.png",
+      "size": 16,
+      "source": "win98icons:media_player-1"
+    },
+    "minesweeper": {
+      "file": "icons16/minesweeper.png",
+      "size": 16,
+      "source": "win98icons:game_mine_1-1"
+    },
+    "solitaire": {
+      "file": "icons16/solitaire.png",
+      "size": 16,
+      "source": "win98icons:game_solitaire-1"
+    },
+    "freecell": {
+      "file": "icons16/freecell.png",
+      "size": 16,
+      "source": "scaled NEAREST from 32x32 (no 16x16 source)"
+    },
+    "pinball": {
+      "file": "icons16/pinball.png",
+      "size": 16,
+      "source": "1j01/98:pinball-16x16.png"
+    },
+    "dos-prompt": {
+      "file": "icons16/dos-prompt.png",
+      "size": 16,
+      "source": "scaled NEAREST from 32x32 (no 16x16 source)"
+    },
+    "dos": {
+      "file": "icons16/dos.png",
+      "size": 16,
+      "source": "win98icons:ms_dos_2-1"
+    },
+    "explorer": {
+      "file": "icons16/explorer.png",
+      "size": 16,
+      "source": "win98icons:directory_explorer-1"
+    },
+    "ie": {
+      "file": "icons16/ie.png",
+      "size": 16,
+      "source": "win98icons:msie2-3"
+    },
+    "outlook": {
+      "file": "icons16/outlook.png",
+      "size": 16,
+      "source": "win98icons:outlook_express-2"
+    },
+    "task-manager": {
+      "file": "icons16/task-manager.png",
+      "size": 16,
+      "source": "win98icons:computer_taskmgr-1"
+    },
+    "volume": {
+      "file": "icons16/volume.png",
+      "size": 16,
+      "source": "win98icons:sndvol32_main-1"
+    },
+    "speaker": {
+      "file": "icons16/speaker.png",
+      "size": 16,
+      "source": "win98icons:loudspeaker_wave-1"
+    },
+    "network-neighborhood": {
+      "file": "icons16/network-neighborhood.png",
+      "size": 16,
+      "source": "win98icons:network_normal_two_pcs-1"
+    },
+    "briefcase": {
+      "file": "icons16/briefcase.png",
+      "size": 16,
+      "source": "win98icons:briefcase-1"
+    },
+    "scheduled-tasks": {
+      "file": "icons16/scheduled-tasks.png",
+      "size": 16,
+      "source": "win98icons:template_sched_task-0"
+    },
+    "web-folders": {
+      "file": "icons16/web-folders.png",
+      "size": 16,
+      "source": "win98icons:directory_net_web-1"
+    },
+    "text-file": {
+      "file": "icons16/text-file.png",
+      "size": 16,
+      "source": "win98icons:notepad_file-1"
+    },
+    "bmp-file": {
+      "file": "icons16/bmp-file.png",
+      "size": 16,
+      "source": "win98icons:paint_file-0"
+    },
+    "exe-file": {
+      "file": "icons16/exe-file.png",
+      "size": 16,
+      "source": "win98icons:executable-1"
+    },
+    "dll-file": {
+      "file": "icons16/dll-file.png",
+      "size": 16,
+      "source": "win98icons:file_gears-1"
+    },
+    "wav-file": {
+      "file": "icons16/wav-file.png",
+      "size": 16,
+      "source": "win98icons:loudspeaker_rays_green-1"
+    },
+    "ini-file": {
+      "file": "icons16/ini-file.png",
+      "size": 16,
+      "source": "win98icons:notepad_file_gear-1"
+    },
+    "unknown-file": {
+      "file": "icons16/unknown-file.png",
+      "size": 16,
+      "source": "win98icons:document-1"
+    },
+    "check": {
+      "file": "icons16/check.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "error": {
+      "file": "icons16/error.png",
+      "size": 16,
+      "source": "win98icons:msg_error-2"
+    },
+    "warning": {
+      "file": "icons16/warning.png",
+      "size": 16,
+      "source": "win98icons:msg_warning-2"
+    },
+    "info": {
+      "file": "icons16/info.png",
+      "size": 16,
+      "source": "win98icons:msg_information-2"
+    },
+    "question": {
+      "file": "icons16/question.png",
+      "size": 16,
+      "source": "win98icons:msg_question-2"
+    },
+    "hourglass": {
+      "file": "icons16/hourglass.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "checkbox": {
+      "file": "icons16/checkbox.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "radio": {
+      "file": "icons16/radio.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "arrow-right": {
+      "file": "icons16/arrow-right.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "arrow-down": {
+      "file": "icons16/arrow-down.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "chevron": {
+      "file": "icons16/chevron.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    },
+    "jezzball": {
+      "file": "icons16/jezzball.png",
+      "size": 16,
+      "source": "drawn in this repo (pixel art reconstruction, no authentic source)"
+    }
+  },
+  "cursors": {
+    "arrow": {
+      "file": "cursors/arrow.png",
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": "jspaint default cursor bitmap (the Windows 9x arrow)"
+    },
+    "help": {
+      "file": "cursors/help.png",
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": "drawn here: arrow + question mark, Win98 1-bit cursor style"
+    },
+    "work": {
+      "file": "cursors/work.png",
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": "drawn here: arrow + hourglass (AppStarting), Win98 1-bit cursor style"
+    },
+    "busy": {
+      "file": "cursors/busy.png",
+      "hotspot": [
+        15,
+        15
+      ],
+      "source": "drawn here: hourglass, Win98 1-bit cursor style"
+    },
+    "cross": {
+      "file": "cursors/cross.png",
+      "hotspot": [
+        15,
+        15
+      ],
+      "source": "jspaint precise cursor bitmap (the Windows 9x crosshair)"
+    },
+    "text": {
+      "file": "cursors/text.png",
+      "hotspot": [
+        8,
+        8
+      ],
+      "source": "drawn here: I-beam, Win98 1-bit cursor style"
+    },
+    "hand": {
+      "file": "cursors/hand.png",
+      "hotspot": [
+        8,
+        0
+      ],
+      "source": "drawn here: pointing hand, Win98 1-bit cursor style"
+    },
+    "move": {
+      "file": "cursors/move.png",
+      "hotspot": [
+        16,
+        16
+      ],
+      "source": "jspaint move cursor bitmap (the Windows 9x SizeAll)"
+    },
+    "size-ns": {
+      "file": "cursors/size-ns.png",
+      "hotspot": [
+        16,
+        8
+      ],
+      "source": "jspaint ns-resize cursor bitmap (the Windows 9x SizeNS)"
+    },
+    "size-ew": {
+      "file": "cursors/size-ew.png",
+      "hotspot": [
+        8,
+        16
+      ],
+      "source": "jspaint ew-resize cursor bitmap (the Windows 9x SizeWE)"
+    },
+    "size-nesw": {
+      "file": "cursors/size-nesw.png",
+      "hotspot": [
+        16,
+        16
+      ],
+      "source": "jspaint nesw-resize cursor bitmap (the Windows 9x SizeNESW)"
+    },
+    "size-nwse": {
+      "file": "cursors/size-nwse.png",
+      "hotspot": [
+        16,
+        16
+      ],
+      "source": "jspaint nwse-resize cursor bitmap (the Windows 9x SizeNWSE)"
+    },
+    "uparrow": {
+      "file": "cursors/uparrow.png",
+      "hotspot": [
+        16,
+        0
+      ],
+      "source": "drawn here: up arrow, Win98 1-bit cursor style"
+    },
+    "nodrop": {
+      "file": "cursors/nodrop.png",
+      "hotspot": [
+        15,
+        15
+      ],
+      "source": "recoloured from the win98icons \"no\" glyph; circle-slash no-drop cursor"
+    },
+    "pen": {
+      "file": "cursors/pen.png",
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": "drawn here: NWPen nib, Win98 1-bit cursor style"
+    },
+    "no": {
+      "file": "cursors/no.png",
+      "hotspot": [
+        15,
+        15
+      ],
+      "source": "recoloured from the win98icons \"no\" glyph (authentic circle-slash shape)"
+    }
+  },
+  "sounds": {
+    "startup": {
+      "file": "sounds/startup.wav",
+      "source": "Windows 98 \\MEDIA\\The Microsoft Sound.wav",
+      "synthesised": false
+    },
+    "ding": {
+      "file": "sounds/ding.wav",
+      "source": "Windows 98 \\MEDIA\\DING.WAV",
+      "synthesised": false
+    },
+    "chime": {
+      "file": "sounds/chime.wav",
+      "source": "Windows 98 \\MEDIA\\CHIMES.WAV",
+      "synthesised": false
+    },
+    "chord": {
+      "file": "sounds/chord.wav",
+      "source": "Windows 98 \\MEDIA\\CHORD.WAV",
+      "synthesised": false
+    },
+    "tada": {
+      "file": "sounds/tada.wav",
+      "source": "Windows 98 \\MEDIA\\TADA.WAV",
+      "synthesised": false
+    },
+    "logoff": {
+      "file": "sounds/logoff.wav",
+      "source": "Windows 98 \\MEDIA\\LOGOFF.WAV",
+      "synthesised": false
+    },
+    "recycle": {
+      "file": "sounds/recycle.wav",
+      "source": "Windows 98 \\MEDIA\\RECYCLE.WAV",
+      "synthesised": false
+    },
+    "notify": {
+      "file": "sounds/notify.wav",
+      "source": "Windows 98 \\MEDIA\\NOTIFY.WAV",
+      "synthesised": false
+    },
+    "error": {
+      "file": "sounds/error.wav",
+      "source": "Windows 98 \\MEDIA\\CHORD.WAV (Critical Stop in the Win98 scheme)",
+      "synthesised": false
+    },
+    "exclamation": {
+      "file": "sounds/exclamation.wav",
+      "source": "Windows 98 \\MEDIA\\CHORD.WAV (Exclamation in the Win98 scheme)",
+      "synthesised": false
+    },
+    "question": {
+      "file": "sounds/question.wav",
+      "source": "Windows 98 \\MEDIA\\CHIMES.WAV (Question in the Win98 scheme)",
+      "synthesised": false
+    },
+    "shutdown": {
+      "file": "sounds/shutdown.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "click": {
+      "file": "sounds/click.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "logon": {
+      "file": "sounds/logon.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "menu": {
+      "file": "sounds/menu.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "minimize": {
+      "file": "sounds/minimize.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "maximize": {
+      "file": "sounds/maximize.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "close": {
+      "file": "sounds/close.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "restore": {
+      "file": "sounds/restore.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    },
+    "balloon": {
+      "file": "sounds/balloon.wav",
+      "source": "synthesised here (Windows 98 shipped no sound for this event)",
+      "synthesised": true
+    }
+  },
+  "wallpapers": {
+    "clouds": {
+      "file": "wallpapers/clouds.png",
+      "tile": false,
+      "size": [
+        640,
+        480
+      ],
+      "source": "authentic Windows 98 640x480 Clouds wallpaper (clouds.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "setup": {
+      "file": "wallpapers/setup.png",
+      "tile": false,
+      "size": [
+        640,
+        480
+      ],
+      "source": "authentic Windows 98 640x480 Setup wallpaper (setup.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "waves": {
+      "file": "wallpapers/waves.png",
+      "tile": true,
+      "size": [
+        32,
+        32
+      ],
+      "source": "authentic Windows 98 tiled pattern (waves.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "straw-mat": {
+      "file": "wallpapers/straw-mat.png",
+      "tile": true,
+      "size": [
+        30,
+        32
+      ],
+      "source": "authentic Windows 98 tiled pattern (strawmat.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "blue-rivets": {
+      "file": "wallpapers/blue-rivets.png",
+      "tile": true,
+      "size": [
+        16,
+        16
+      ],
+      "source": "authentic Windows 98 tiled pattern (bluerivets.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "red-blocks": {
+      "file": "wallpapers/red-blocks.png",
+      "tile": true,
+      "size": [
+        54,
+        96
+      ],
+      "source": "authentic Windows 98 tiled pattern (redblocks.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "bubbles": {
+      "file": "wallpapers/bubbles.png",
+      "tile": true,
+      "size": [
+        64,
+        64
+      ],
+      "source": "authentic Windows 98 tiled pattern (bubbles.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "forest": {
+      "file": "wallpapers/forest.png",
+      "tile": true,
+      "size": [
+        256,
+        256
+      ],
+      "source": "authentic Windows 98 tiled pattern (forest.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "tiles": {
+      "file": "wallpapers/tiles.png",
+      "tile": true,
+      "size": [
+        32,
+        32
+      ],
+      "source": "authentic Windows 98 tiled pattern (tiles.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "black-thatch": {
+      "file": "wallpapers/black-thatch.png",
+      "tile": true,
+      "size": [
+        31,
+        30
+      ],
+      "source": "authentic Windows 98 tiled pattern (blackthatch.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "circles": {
+      "file": "wallpapers/circles.png",
+      "tile": true,
+      "size": [
+        32,
+        32
+      ],
+      "source": "authentic Windows 98 tiled pattern (circles.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "triangles": {
+      "file": "wallpapers/triangles.png",
+      "tile": true,
+      "size": [
+        16,
+        16
+      ],
+      "source": "authentic Windows 98 tiled pattern (triangles.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "carved-stone": {
+      "file": "wallpapers/carved-stone.png",
+      "tile": true,
+      "size": [
+        32,
+        32
+      ],
+      "source": "authentic Windows 98 tiled pattern (carvedstone.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "gold-weave": {
+      "file": "wallpapers/gold-weave.png",
+      "tile": true,
+      "size": [
+        256,
+        256
+      ],
+      "source": "authentic Windows 98 tiled pattern (goldweave.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "houndstooth": {
+      "file": "wallpapers/houndstooth.png",
+      "tile": true,
+      "size": [
+        27,
+        25
+      ],
+      "source": "authentic Windows 98 tiled pattern (houndstooth.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "metal-links": {
+      "file": "wallpapers/metal-links.png",
+      "tile": true,
+      "size": [
+        200,
+        180
+      ],
+      "source": "authentic Windows 98 tiled pattern (metallinks.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "pinstripe": {
+      "file": "wallpapers/pinstripe.png",
+      "tile": true,
+      "size": [
+        30,
+        32
+      ],
+      "source": "authentic Windows 98 tiled pattern (pinstripe.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "sandstone": {
+      "file": "wallpapers/sandstone.png",
+      "tile": true,
+      "size": [
+        256,
+        256
+      ],
+      "source": "authentic Windows 98 tiled pattern (sandstone.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "stitches": {
+      "file": "wallpapers/stitches.png",
+      "tile": true,
+      "size": [
+        96,
+        96
+      ],
+      "source": "authentic Windows 98 tiled pattern (stitches.bmp, via github.com/Kippykip/W9X-Wallpapers)"
+    },
+    "windows98": {
+      "file": "wallpapers/windows98.png",
+      "tile": false,
+      "size": [
+        640,
+        480
+      ],
+      "source": "composed here: authentic Windows 98 Clouds.bmp with the four-colour flag + \"Microsoft Windows 98\" wordmark drawn on top"
+    },
+    "slate": {
+      "file": "wallpapers/slate.png",
+      "tile": true,
+      "size": [
+        8,
+        8
+      ],
+      "source": "synthesised here: 2-colour tiled desktop pattern in the Win98 pattern style (no authentic BMP available)",
+      "synthesised": true
+    },
+    "lattice": {
+      "file": "wallpapers/lattice.png",
+      "tile": true,
+      "size": [
+        8,
+        8
+      ],
+      "source": "synthesised here: 2-colour tiled desktop pattern in the Win98 pattern style (no authentic BMP available)",
+      "synthesised": true
+    },
+    "honeycomb": {
+      "file": "wallpapers/honeycomb.png",
+      "tile": true,
+      "size": [
+        16,
+        16
+      ],
+      "source": "synthesised here: 2-colour tiled desktop pattern in the Win98 pattern style (no authentic BMP available)",
+      "synthesised": true
+    },
+    "marbled": {
+      "file": "wallpapers/marbled.png",
+      "tile": true,
+      "size": [
+        16,
+        16
+      ],
+      "source": "synthesised here: 2-colour tiled desktop pattern in the Win98 pattern style (no authentic BMP available)",
+      "synthesised": true
+    }
+  },
+  "logo": {
+    "winflag48": {
+      "file": "logo/winflag48.png",
+      "size": 48,
+      "source": "drawn here: four-colour wavy Windows flag, Win98 palette"
+    },
+    "winflag16": {
+      "file": "logo/winflag16.png",
+      "size": 16,
+      "source": "win98icons.alexmeub.com Windows 98 icon catalogue (renders of the original Windows 98 shell icon resources) (windows-4)"
+    },
+    "winlogo": {
+      "file": "logo/winlogo.png",
+      "size": [
+        384,
+        96
+      ],
+      "source": "drawn here: Windows flag + \"Microsoft Windows 98\" wordmark lockup"
+    },
+    "startflag": {
+      "file": "logo/startflag.png",
+      "size": 16,
+      "source": "win98icons.alexmeub.com Windows 98 icon catalogue (renders of the original Windows 98 shell icon resources) (windows_button-1, the Start button flag)"
+    }
+  },
+  "boot": {
+    "splash": {
+      "file": "boot/splash.png",
+      "size": [
+        640,
+        400
+      ],
+      "source": "drawn here: Windows 98 boot splash reconstruction (black field, cloud, four-colour flag, \"Microsoft Windows 98\")"
+    },
+    "shutdown": {
+      "file": "boot/shutdown.png",
+      "size": [
+        640,
+        400
+      ],
+      "source": "drawn here: \"It is now safe to turn off your computer\" reconstruction (orange on black)"
+    }
+  },
+  "notes": "Provenance and licensing. (1) Icons: the bulk are the \"win98icons\" catalogue by Alex Meub (win98icons.alexmeub.com) -- PNG renders of the icon resources shipped inside Windows 98 (shell32.dll, pifmgr.dll, main.cpl and friends), which is why they are authentic 16-colour 32x32/16x16 art. A few (run, logoff, pinball) come from the github.com/1j01/98 icon folder, which carries the same catalogue plus community additions. The catalogue is distributed freely by its author and the repo is a shared-source project; the underlying artwork is Microsoft copyright and is used here for a non-commercial period reproduction. (2) @react95/icons (MIT, npm @react95/icons 2.5.3) was evaluated as a secondary source but not needed -- the authentic catalogue covered more keys. (3) Cursors: the arrow, crosshair, move and the four resize cursors are the real Microsoft system cursor bitmaps as carried by jspaint (github.com/1j01/98, programs/jspaint/images/cursors). The remaining cursors are reconstructed here as 32x32 black-with-white-outline pixel art. (4) Sounds: eleven files are the unmodified Windows 98 \\MEDIA WAV files (The Microsoft Sound, CHIMES, CHORD, DING, TADA, LOGOFF, NOTIFY, RECYCLE) recovered via github.com/MCPlayer2015/all-windows-sounds, a repository of Microsoft audio that states Microsoft copyright. Windows 98 mapped Asterisk/Question to CHIMES.WAV and Critical Stop/Exclamation to CHORD.WAV, so error/exclamation/question are byte-identical copies of chord/chime -- that is the real Windows 98 behaviour, not a stub. The nine sounds marked \"synthesised\": true are 22.05 kHz 16-bit mono PCM written by this build because Windows 98 shipped no sound for window minimise/maximise/close/restore, menu, click, logon, shutdown or balloon events. (5) Wallpapers: clouds, setup and every tiled pattern are the genuine Windows 98 BMP files recovered via github.com/Kippykip/W9X-Wallpapers (Microsoft copyright). windows98.png is the authentic Clouds.bmp with the Windows 98 branding lockup drawn on top. slate, honeycomb, marbled and lattice are synthesised 2-colour tiled patterns because no BMP was recoverable. (6) logo and boot are drawn here (PIL pixel/polygon art, no anti-aliasing) as faithful reconstructions. All artwork is hard-edged 1998-style: 16-colour icons, 1-bit cursors, no gradients, no anti-aliasing, no modern or emoji imagery. Every file is local; nothing is fetched at runtime."
+}
