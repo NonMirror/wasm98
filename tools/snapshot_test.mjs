@@ -209,6 +209,11 @@ assert.deepEqual(kernel.capturePersistentState(), { fs: 'KFS1\n0|0|11|C:\\BEFORE
 const stable = kernel.capturePersistentState();
 await assert.rejects(() => importPoint(api, '{not json'), /malformed|invalid|JSON/i);
 await assert.rejects(() => importPoint(api, {
+  format: 'W98-SNAPSHOT', version: 1, createdAt: new Date().toISOString(),
+  name: 'malformed image', description: '',
+  state: { fs: 'KFS1\n0|0|2|C:\\BROKEN|QQ==\n', reg: stable.reg },
+}), /malformed|length|data/i);
+await assert.rejects(() => importPoint(api, {
   format: 'W98-SNAPSHOT', version: 999, createdAt: new Date().toISOString(),
   name: 'future', description: '', state: stable,
 }), /version|unsupported|future/i);
