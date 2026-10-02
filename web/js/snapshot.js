@@ -226,6 +226,10 @@
         return text;
       });
     },
+    download: function (ref, options) {
+      options = Object.assign({}, options || {}, { download: true });
+      return API.export(ref, options);
+    },
     import: function (source) {
       var p = source && typeof source.text === 'function' ? source.text() : Promise.resolve(typeof source === 'string' ? source : JSON.stringify(source));
       return p.then(function (text) {
