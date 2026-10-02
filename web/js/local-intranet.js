@@ -200,8 +200,8 @@
     if (!Object.prototype.hasOwnProperty.call(pages, name)) {
       return errorResult('not-found', 'The requested intranet page was not found.', { url: url, host: HOST, path: pathFor(name) });
     }
-    var body = pages[name];
-    try { if (W98.fs && W98.fs.readText && W98.fs.exists(pathFor(name))) body = W98.fs.readText(pathFor(name)) || body; } catch (e) { /* embedded fixture remains deterministic */ }
+    var body = name === 'search.html' ? searchPage(queryValue(n.query, 'q')) : pages[name];
+    try { if (!n.query && W98.fs && W98.fs.readText && W98.fs.exists(pathFor(name))) body = W98.fs.readText(pathFor(name)) || body; } catch (e) { /* embedded fixture remains deterministic */ }
     return { ok: true, status: 'ok', kind: 'file', url: 'http://' + HOST + '/' + name,
       host: HOST, path: pathFor(name), filesystemPath: pathFor(name),
       input: String(url == null ? '' : url), label: 'W98 Company Intranet - ' + name,
@@ -211,9 +211,31 @@
     var r = resolve(url);
     if (!r.ok) return r;
     try {
-      if (W98.fs && W98.fs.readText && W98.fs.exists(r.filesystemPath)) r.html = W98.fs.readText(r.filesystemPath) || r.html;
+      if (!r.query && W98.fs && W98.fs.readText && W98.fs.exists(r.filesystemPath)) r.html = W98.fs.readText(r.filesystemPath) || r.html;
     } catch (e) { /* embedded fixture is the deterministic fallback */ }
     return r;
+  }
+  function queryValue(query, key) {
+    var q = String(query || '').split('&');
+    for (var i = 0; i < q.length; i++) {
+      var pair = q[i].split('=');
+      if (decodePart(pair[0] || '').toLowerCase() === key.toLowerCase()) return decodePart((pair.slice(1).join('=') || '').replace(/\+/g, ' '));
+    }
+    return '';
+  }
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function searchPage(query) {
+    var q = String(query || '').replace(/^\s+|\s+$/g, '');
+    if (!q) return pages['search.html'];
+    var results = search(q), list = results.map(function (r) {
+      var href = r.filesystemPath || r.url || r.uncPath;
+      return '<li><a href="' + escapeHtml(href) + '">' + escapeHtml(r.title || r.name) + '</a></li>';
+    }).join('');
+    return pages['search.html'].replace('<hr>', '<hr><h2>Search results for &quot;' + escapeHtml(q) + '&quot;</h2>' + (list ? '<ul>' + list + '</ul>' : '<p>No matching local documents were found.</p>'));
   }
   function search(query) {
     ensureSeeded();

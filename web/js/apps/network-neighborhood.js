@@ -314,6 +314,10 @@
   /* Keep a short alias for the local intranet and dial-up adapters.  If a
      different app already owns W98.network, leave its API intact. */
   if (!W98.network) W98.network = MODEL;
+  /* A previous session may have left the neighborhood registry marked
+     connected.  The dialer itself starts disconnected after a reload, so
+     reconcile that persisted view as soon as both scripts are present. */
+  try { if (W98.dialup && typeof MODEL.syncFromDialup === 'function') MODEL.syncFromDialup(W98.dialup); } catch (e) { /* optional sibling */ }
 
   /* ---------------------------------------------------------------------- */
   /* Network Neighborhood window                                             */
@@ -531,7 +535,7 @@
         dialupUnsubscribe = d.subscribe(function () { MODEL.syncFromDialup(d); });
         try {
           var snap = typeof d.getState === 'function' ? d.getState() : null;
-          if (snap && snap.state === 'connected') MODEL.syncFromDialup(d);
+          if (snap && snap.state) MODEL.syncFromDialup(d);
         } catch (e) { /* optional adapter */ }
       }
       bindDialup();
