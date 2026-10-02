@@ -14,6 +14,7 @@ import vm from 'node:vm';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(join(root, 'web/js/snapshot.js'), 'utf8');
+assert.equal(source.includes('localStorage'), false, 'snapshot storage does not use localStorage');
 
 /* A deliberately small IndexedDB double.  Requests and transactions complete
  * asynchronously, as browser IDB requests do, which catches accidental
@@ -230,8 +231,5 @@ assert.equal(afterDelete.length, 0);
 
 // Ensure the test really used IndexedDB rather than a localStorage fallback.
 assert.ok(indexedDB, 'named points use IndexedDB');
-assert.equal(typeof sandboxLocalStorage(), 'undefined');
-
-function sandboxLocalStorage() { return undefined; }
 
 console.log(`snapshot  ${7} checks passed`);

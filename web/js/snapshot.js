@@ -60,7 +60,14 @@
         req.onsuccess = function () {
           var c = req.result;
           if (!c) { d.close(); resolve(out); return; }
-          if (typeof c.key === 'string' && c.key.indexOf(PREFIX) === 0 && c.value) out.push(c.value);
+          if (typeof c.key === 'string' && c.key.indexOf(PREFIX) === 0 && c.value) {
+            /* The in-memory cache is useful when IndexedDB is unavailable,
+               but it can also contain a record that has just been written to
+               the persistent store.  Merge by stable id so list/get never
+               expose a duplicate point after a create or import. */
+            var already = out.some(function (x) { return x && x.id === c.value.id; });
+            if (!already) out.push(c.value);
+          }
           c.continue();
         };
       });
@@ -115,10 +122,14 @@
         var f = line.split('|');
         if (f.length < 5 || (f[0] !== '0' && f[0] !== '1') || !/^\d+$/.test(f[1]) || !/^\d+$/.test(f[2]) || !f[3])
           throw fail('malformed', 'Malformed filesystem image record');
-        var data = f.slice(4).join('|');
-        if (data && !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw fail('malformed', 'Malformed filesystem image data');
+        if (f.length !== 5) throw fail('malformed', 'Malformed filesystem image record');
+        var data = f[4];
+        if (data && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw fail('malformed', 'Malformed filesystem image data');
         var size = Number(f[2]);
         if (!Number.isSafeInteger(size) || size > 16 * 1024 * 1024) throw fail('malformed', 'Filesystem image is too large');
+        var pad = data.endsWith('==') ? 2 : (data.endsWith('=') ? 1 : 0);
+        var decoded = data ? (data.length / 4) * 3 - pad : 0;
+        if (decoded !== size) throw fail('malformed', 'Filesystem image data length does not match its record');
       } else {
         var r = line.split('\t');
         if (hdr === 'KREG2') {
@@ -126,13 +137,16 @@
           r = [r[0], r[1], r[2], r.slice(3).join('\t')];
         } else if (r.length < 2 || !r[0]) throw fail('malformed', 'Malformed registry image record');
         var b = hdr === 'KREG2' ? r[3] : (r.length > 2 ? r.slice(2).join('\t') : '');
-        if (b && !/^[A-Za-z0-9+/]*={0,2}$/.test(b)) throw fail('malformed', 'Malformed registry image data');
+        if (b && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b)) throw fail('malformed', 'Malformed registry image data');
       }
     });
     return value;
   }
   function validate(input) {
     var o = input;
+    if (typeof o === 'string') {
+      try { o = JSON.parse(o); } catch (_) { throw fail('malformed', 'Snapshot is not valid JSON'); }
+    }
     if (!o || typeof o !== 'object' || Array.isArray(o)) throw fail('malformed', 'Malformed snapshot envelope');
     if (o.format !== FORMAT) throw fail('unsupported', 'Unsupported snapshot format');
     if (!Number.isInteger(o.version) || o.version < 1) throw fail('malformed', 'Malformed snapshot version');
@@ -151,7 +165,7 @@
   function find(ref) {
     return readAll().then(function (all) {
       var wanted = typeof ref === 'string' ? ref : (ref && ref.id);
-      var found = all.filter(function (x) { return x && (x.id === wanted || x.name === ref); })[0];
+      var found = all.filter(function (x) { return x && (x.id === wanted || (typeof ref === 'string' && String(x.name).toLowerCase() === ref.toLowerCase())); })[0];
       if (!found) throw fail('not-found', 'Restore point not found');
       return validate(found);
     });
@@ -183,7 +197,8 @@
     'delete': function (ref) { return API.remove(ref); },
     restore: function (ref, options) {
       options = options || {};
-      return find(ref).then(function (env) {
+      var lookup = ref && ref.state ? Promise.resolve(validate(ref)) : find(ref);
+      return lookup.then(function (env) {
         if (!K || typeof K.replacePersistentState !== 'function') throw fail('unavailable', 'Kernel persistence is unavailable');
         return API.capture().then(function (before) {
           return Promise.resolve(K.replacePersistentState(env.state)).then(function (result) {
@@ -216,6 +231,10 @@
       return p.then(function (text) {
         var parsed; try { parsed = JSON.parse(text); } catch (e) { throw fail('malformed', 'Snapshot is not valid JSON'); }
         var env = validate(parsed);
+        /* An exported point may carry its source profile's id.  Imports are
+           new records, so assign a local id before writing; this also lets a
+           user import the same file more than once under distinct names. */
+        env.id = id();
         return readAll().then(function (all) {
           if (all.some(function (x) { return x && String(x.name).toLowerCase() === env.name.toLowerCase(); })) throw fail('duplicate-name', 'A restore point with that name already exists');
           return put(env);
@@ -223,6 +242,7 @@
       });
     },
     importSnapshot: function (source) { return API.import(source); },
+    download: function (ref, options) { options = options || {}; options.download = true; return API.export(ref, options); },
     createRestorePoint: function (name, description) { return API.create(name, description); },
     restorePoint: function (ref, options) { return API.restore(ref, options); },
     deleteRestorePoint: function (ref) { return API.remove(ref); }
