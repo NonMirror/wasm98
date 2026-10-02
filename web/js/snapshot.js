@@ -246,10 +246,12 @@
       });
     },
     importSnapshot: function (source) { return API.import(source); },
-    download: function (ref, options) { options = options || {}; options.download = true; return API.export(ref, options); },
     createRestorePoint: function (name, description) { return API.create(name, description); },
     restorePoint: function (ref, options) { return API.restore(ref, options); },
-    deleteRestorePoint: function (ref) { return API.remove(ref); }
+    deleteRestorePoint: function (ref) { return API.remove(ref); },
+    listRestorePoints: function () { return API.list(); },
+    getRestorePoint: function (ref) { return API.get(ref); },
+    exportSnapshot: function (ref, options) { return API.export(ref, options); }
   };
   global.W98Snapshot = API;
   if (global.W98) global.W98.snapshot = API;
