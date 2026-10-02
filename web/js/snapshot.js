@@ -121,8 +121,8 @@
       if (which === 'filesystem') {
         var f = line.split('|');
         if (f.length < 5 || (f[0] !== '0' && f[0] !== '1') || !/^\d+$/.test(f[1]) || !/^\d+$/.test(f[2]) || !f[3])
-          throw fail('malformed', 'Malformed filesystem image record');
-        if (f.length !== 5) throw fail('malformed', 'Malformed filesystem image record');
+          throw fail('malformed', 'Malformed filesystem image record: ' + line.slice(0, 100));
+        if (f.length !== 5) throw fail('malformed', 'Malformed filesystem image record: ' + line.slice(0, 100));
         var data = f[4];
         if (data && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw fail('malformed', 'Malformed filesystem image data');
         var size = Number(f[2]);

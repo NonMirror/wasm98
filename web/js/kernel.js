@@ -24,6 +24,37 @@
 
   var enc = new TextEncoder();
   var dec = new TextDecoder();
+  var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  function b64Encode(arr) {
+    var out = '', i = 0;
+    for (; i + 2 < arr.length; i += 3) {
+      var v = (arr[i] << 16) | (arr[i + 1] << 8) | arr[i + 2];
+      out += B64[(v >>> 18) & 63] + B64[(v >>> 12) & 63] + B64[(v >>> 6) & 63] + B64[v & 63];
+    }
+    if (i < arr.length) {
+      var rem = arr.length - i, w = arr[i] << 16;
+      if (rem === 2) w |= arr[i + 1] << 8;
+      out += B64[(w >>> 18) & 63] + B64[(w >>> 12) & 63] + (rem === 2 ? B64[(w >>> 6) & 63] : '=') + '=';
+    }
+    return out;
+  }
+  function b64Decode(s) {
+    s = String(s || '');
+    if (!s) return new Uint8Array(0);
+    var out = [], i = 0;
+    function val(c) { return B64.indexOf(c); }
+    while (i < s.length) {
+      if (i + 3 >= s.length) throw new Error('truncated base64');
+      var a = val(s[i++]), b = val(s[i++]), c = s[i++], d = s[i++];
+      var cv = c === '=' ? 0 : val(c), dv = d === '=' ? 0 : val(d);
+      if (a < 0 || b < 0 || cv < 0 || dv < 0) throw new Error('invalid base64');
+      var n = (a << 18) | (b << 12) | (cv << 6) | dv;
+      out.push((n >>> 16) & 255);
+      if (c !== '=') out.push((n >>> 8) & 255);
+      if (d !== '=') out.push(n & 255);
+    }
+    return new Uint8Array(out);
+  }
   var API = {
     mode: 'none',
     version: 0,
@@ -351,6 +382,34 @@
     flushCount++;
     return idbWrite({ fs: fsBlob, reg: regBlob, savedAt: Date.now() });
   }
+  /* ------------------------------------------------ persistent state bridge */
+  /* Restore points use the kernel's own KFS1/KREG serializer.  Keep this
+     small bridge here instead of teaching an application how to walk the
+     filesystem or hive.  The bridge also gives the JS shim the same shape so
+     the System Restore UI can remain usable when WebAssembly is unavailable. */
+  function persistentStateWasm() {
+    if (!wasm) return null;
+    var n = wasm.k_fs_save();
+    var fsBlob = readText(wasm.k_tmp_ptr(), n);
+    n = wasm.k_reg_save();
+    var regBlob = readText(wasm.k_tmp_ptr(), n);
+    return { fs: fsBlob, reg: regBlob };
+  }
+  function replacePersistentStateWasm(state) {
+    if (!wasm || !state) return 0;
+    var count = 0, a = pushText(state.fs), b = pushText(state.reg);
+    try {
+      count += wasm.k_fs_load(a.p, a.n);
+      count += wasm.k_reg_load(b.p, b.n);
+    } finally {
+      wasm.k_free(a.p); wasm.k_free(b.p);
+    }
+    /* Persist the replaced state immediately.  This is deliberately separate
+       from the ordinary dirty timer: a subsequent reload must see the point
+       even if the browser closes before the next heartbeat. */
+    dirty = true;
+    return flush().then(function () { return count; });
+  }
   function restore() {
     var load = idbRead(['fs', 'reg']).then(function (out) {
       var n = 0;
@@ -436,6 +495,70 @@
       set: function (path, name, v) { reg.set(path + '\\' + name, String(v)); markDirty(); return true; },
       del: function (path, name) { var r = reg.delete(path + '\\' + name); markDirty(); return r; }
     };
+    function shimSave() {
+      var fs = ['KFS1'];
+      Array.from(files.keys()).sort().forEach(function (p) {
+        var b = files.get(p) || new Uint8Array(0);
+        fs.push('0|0|' + b.length + '|' + p + '|' + b64Encode(b));
+      });
+      Array.from(dirs).sort().forEach(function (p) {
+        if (p === 'C:\\' || p === 'A:\\') return;
+        if (!files.has(p)) fs.push('1|0|0|' + p + '|');
+      });
+      var rs = ['KREG1'];
+      Array.from(reg.keys()).sort().forEach(function (key) {
+        var at = key.lastIndexOf('\\');
+        var path = at < 0 ? key : key.slice(0, at);
+        var name = at < 0 ? '' : key.slice(at + 1);
+        rs.push(path + '\t' + name + '\t' + b64Encode(enc.encode(String(reg.get(key)))));
+      });
+      return { fs: fs.join('\n') + '\n', reg: rs.join('\n') + '\n' };
+    }
+    function shimLoad(state) {
+      var fsLines = String(state.fs).split(/\r?\n/), regLines = String(state.reg).split(/\r?\n/);
+      var nf = new Map(), nd = new Set(['C:\\', 'A:\\']);
+      if (fsLines.shift() !== 'KFS1') throw new Error('unsupported filesystem image');
+      fsLines.forEach(function (line) {
+        if (!line) return;
+        var p = line.split('|');
+        if (p.length < 5 || (p[0] !== '0' && p[0] !== '1') || !p[3]) throw new Error('malformed filesystem image');
+        var path = up(p[3]), size = Number(p[2]);
+        if (!Number.isInteger(size) || size < 0) throw new Error('malformed filesystem size');
+        if (p[0] === '1') { nd.add(path); return; }
+        var data = b64Decode(p.slice(4).join('|'));
+        if (data.length !== size) throw new Error('filesystem size mismatch');
+        nf.set(path, data); nd.add(parent(path));
+      });
+      var regHeader = regLines.shift();
+      if (regHeader !== 'KREG1' && regHeader !== 'KREG2') throw new Error('unsupported registry image');
+      var nr = new Map();
+      regLines.forEach(function (line) {
+        if (!line) return;
+        var p = line.split('\t');
+        var data;
+        if (regHeader === 'KREG2') {
+          if (p.length < 4 || !p[0]) throw new Error('malformed registry image');
+          data = b64Decode(p.slice(3).join('\t'));
+        } else {
+          if (p.length < 3 || !p[0]) throw new Error('malformed registry image');
+          data = b64Decode(p.slice(2).join('\t'));
+        }
+        nr.set(p[0] + '\\' + p[1], dec.decode(data));
+      });
+      files = nf; dirs = nd; reg = nr; markDirty();
+      return nf.size + nr.size;
+    }
+    function shimFlush() {
+      var state = shimSave();
+      return idbWrite({ fs: state.fs, reg: state.reg, savedAt: Date.now() });
+    }
+    function shimRestore() {
+      return idbRead(['fs', 'reg']).then(function (out) {
+        if (!out || !out.fs || !out.reg) return 0;
+        return shimLoad({ fs: out.fs, reg: out.reg });
+      });
+    }
+    function shimReplace(state) { return Promise.resolve(shimLoad(state)).then(function (n) { return shimFlush().then(function () { return n; }); }); }
     return {
       mode: 'shim',
       fs: fs, reg: regApi,
@@ -466,8 +589,10 @@
       tick: function () { st.TICKS++; st.UPTIME = Date.now() - started; return 0; },
       stats: function () { st.HEAP_SIZE = 8 * 1024 * 1024; st.HEAP_USED = 0; st.HEAP_FREE = 8 * 1024 * 1024; st.NODES = dirs.size + files.size; st.FILES = files.size; st.REG = reg.size; st.QUEUE = timers.size; st.TMP_CAP = 0; st.VERSION = 0; st.SYSCALLS = 0; st.HEAP_USED = files.size * 4096; return Object.assign({}, st); },
       logText: function () { return '[shim] kernel.wasm unavailable; running the reduced JS fallback.\n'; },
-      flush: function () { return Promise.resolve(false); },
-      restore: function () { return Promise.resolve(0); },
+      flush: shimFlush,
+      capturePersistentState: shimSave,
+      replacePersistentState: shimReplace,
+      restore: shimRestore,
       seedExtras: true
     };
   }
@@ -510,6 +635,8 @@
         API.logText = logText;
         API.flush = flush;
         API.restore = restore;
+        API.capturePersistentState = persistentStateWasm;
+        API.replacePersistentState = replacePersistentStateWasm;
         API.exitCode = function (pid) { return wasm.k_proc_destroy(pid); };
         API.panic = function (code) { return wasm.k_panic(code || 7); };
         API.panicked = function () { return wasm.k_panicked(); };
@@ -540,6 +667,7 @@
         API.mode = 'shim';
         API.seedExtras = true;
         if (global.console) console.warn('kernel.wasm failed to load, using shim:', API.error);
+        return shim.restore().catch(function () { return 0; });
       }).then(function () {
         resolve(API);          /* the boot promise must actually settle */
       });

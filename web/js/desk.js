@@ -587,7 +587,7 @@
     run: 1, find: 1, help: 1, winver: 1, recycle: 1, taskmgr: 1, explorer: 1, cmd: 1, ie: 1, outlook: 1,
     display: 1, system: 1, datetime: 1, sounds: 1, mouse: 1, keyboard: 1, addremove: 1, control: 1,
     accessibility: 1, gamepad: 1, internetoptions: 1, modems: 1, multimedia: 1, networkconfig: 1,
-    power: 1, regional: 1, users: 1, addhardware: 1, taskbarsettings: 1, folderoptions: 1
+    power: 1, regional: 1, users: 1, addhardware: 1, taskbarsettings: 1, folderoptions: 1, restore: 1
   };
   var GROUP_OVERRIDE = { dosgame: 'DOS Games' };
   var GROUP_ORDER = ['Accessories', 'Games', 'DOS Games', 'System Tools', 'StartUp'];
