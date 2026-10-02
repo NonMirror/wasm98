@@ -172,8 +172,9 @@
   }
 
   var API = {
-    format: FORMAT, version: VERSION,
+    format: FORMAT, version: VERSION, FORMAT: FORMAT, VERSION: VERSION,
     validate: function (x) { return validate(x); },
+    validateEnvelope: function (x) { return validate(x); },
     capture: function () {
       return whenReady().then(function () {
         if (!K || typeof K.capturePersistentState !== 'function') throw fail('unavailable', 'Kernel persistence is unavailable');
@@ -230,6 +231,7 @@
       options = Object.assign({}, options || {}, { download: true });
       return API.export(ref, options);
     },
+    exportJson: function (ref) { return API.export(ref, { download: false }); },
     import: function (source) {
       var p = source && typeof source.text === 'function' ? source.text() : Promise.resolve(typeof source === 'string' ? source : JSON.stringify(source));
       return p.then(function (text) {
@@ -254,5 +256,5 @@
     exportSnapshot: function (ref, options) { return API.export(ref, options); }
   };
   global.W98Snapshot = API;
-  if (global.W98) global.W98.snapshot = API;
+  if (global.W98) { global.W98.snapshot = API; global.W98.systemRestore = API; }
 })(window);
