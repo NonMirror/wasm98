@@ -398,11 +398,18 @@
 
     buildResizers(this);
 
+    /* A window is an input boundary.  The desktop holder is also the
+       windows' parent, so a press in a client or title bar would otherwise
+       bubble into the desktop marquee handler.  Keep the focus behaviour on
+       the frame, but consume both mouse and pointer starts before they leave
+       the window. */
     on(we, 'mousedown', function (e) {
+      e.stopPropagation();
       if (opts.modal) return;
       var w = winByEl(we);
       if (w && w !== activeWin) w.focus();
     });
+    on(we, 'pointerdown', function (e) { e.stopPropagation(); });
     on(client, 'keydown', function (e) { self.emit('key', e); });
 
     this.setTitle(def.title || def.id);

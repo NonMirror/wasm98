@@ -318,7 +318,11 @@
   function wireDesktop() {
     on(holder, 'mousedown', function (ev) {
       if (ev.button !== 0) return;
-      if (ev.target.closest && ev.target.closest('.dicon')) return;
+      /* holder contains every window frame.  Only a press whose top-level
+         target is the desktop surface can begin a desktop selection; a
+         bubbled press from a window must never install document-wide drag
+         listeners or create a marquee behind that window. */
+      if (ev.target !== holder) return;
       deselectAll();
       W98.closeMenus();
       var band = el('div');
