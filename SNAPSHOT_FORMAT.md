@@ -44,13 +44,12 @@ changed.
 
 ## IndexedDB storage
 
-Named restore points are kept in a separate IndexedDB database named
-`w98-system-restore`.  Automatic persistence continues to use the existing
-`w98-kernel` records (`fs`, `reg`, and `savedAt`); the two databases are kept
-separate so opening the restore database can never interfere with an older
-kernel database schema.  User snapshots are never used as the automatic boot
-record.  Consequently a malformed imported point or
-a failed restore cannot overwrite the current automatic snapshot.
+Named restore points are kept in the existing `w98-kernel` IndexedDB database
+under `restore-point:<id>` keys in the `snap` object store.  Automatic
+persistence continues to use its existing records (`fs`, `reg`, and
+`savedAt`); the key namespace is separate, so user snapshots are never used as
+the automatic boot record.  Consequently a malformed imported point or a
+failed restore cannot overwrite the current automatic snapshot.
 
 The browser fallback (shim mode) uses the same envelope and IndexedDB records;
 it captures the shim's filesystem and registry through the same `W98Kernel.fs`
@@ -72,4 +71,3 @@ untouched.
 Export is a browser download of the exact envelope JSON.  The file can be
 imported into a fresh profile as long as its version and state encodings are
 supported by that wasm98 build.
-
