@@ -234,4 +234,4 @@ assert.equal(afterDelete.length, 0);
 // Ensure the test really used IndexedDB rather than a localStorage fallback.
 assert.ok(indexedDB, 'named points use IndexedDB');
 
-console.log(`snapshot  ${7} checks passed`);
+console.log('snapshot checks passed');
