@@ -15,6 +15,7 @@
   var mem = new Map();
   var enc = new TextEncoder();
   var K = global.W98Kernel;
+  var storagePersistent = !!global.indexedDB;
 
   function fail(code, message) {
     var e = new Error(message);
@@ -72,7 +73,7 @@
         };
       });
     }).catch(function (e) {
-      if (e && e.code === 'unavailable') return out;
+      if (e && e.code === 'unavailable') { storagePersistent = false; return out; }
       throw e;
     });
   }
@@ -88,7 +89,7 @@
         tx.onabort = function () { d.close(); reject(fail('storage', 'Unable to save restore point')); };
       });
     }).catch(function (e) {
-      if (e && e.code === 'unavailable') return env; /* session fallback */
+      if (e && e.code === 'unavailable') { storagePersistent = false; return env; } /* session fallback */
       throw e;
     });
   }
@@ -173,6 +174,7 @@
 
   var API = {
     format: FORMAT, version: VERSION, FORMAT: FORMAT, VERSION: VERSION,
+    get persistent() { return storagePersistent; },
     validate: function (x) { return validate(x); },
     validateEnvelope: function (x) { return validate(x); },
     capture: function () {

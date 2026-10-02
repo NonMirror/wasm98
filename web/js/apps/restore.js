@@ -54,7 +54,10 @@
       win.el.appendChild(fileInput);
 
       var rows = [], selected = null, busy = false;
-      function status(text) { win.setStatus([{ text: text, width: 500 }, { text: (W98.kernelMode() === 'wasm' ? 'WASM kernel' : 'shim mode') }]); }
+      function status(text) {
+        var storage = Snap && Snap.persistent === false ? ' (session only; IndexedDB unavailable)' : '';
+        win.setStatus([{ text: text + storage, width: 500 }, { text: (W98.kernelMode() === 'wasm' ? 'WASM kernel' : 'shim mode') }]);
+      }
       function setBusy(v) {
         busy = !!v;
         [createB, restoreB, deleteB, exportB, importB].forEach(function (b) { b.disabled = busy; });
