@@ -31,8 +31,8 @@ browser profile.  The state object contains the kernel's own serialized images:
   newer `KREG2` images are accepted so existing data remains compatible).
 
 The kernel remains the sole owner of these two encodings.  Snapshot code stores
-and transports the opaque strings; it must not parse or recreate filesystem or
-registry records itself.  Desktop settings and application settings are
+and transports the strings and performs only defensive framing checks; it does
+not interpret or recreate filesystem or registry records.  Desktop settings and application settings are
 represented by their registry values and therefore travel with `state.reg`.
 
 An implementation may add non-semantic metadata fields in a future envelope,
