@@ -124,8 +124,8 @@ function createKernel() {
   };
 }
 
-function loadSnapshot() {
-  const indexedDB = makeIndexedDB();
+function loadSnapshot(existingIndexedDB) {
+  const indexedDB = existingIndexedDB || makeIndexedDB();
   const kernel = createKernel();
   const sandbox = {
     console,
@@ -194,6 +194,10 @@ assert.equal(listed[0].name, 'Before game');
 assert.ok(Number(listed[0].size || first.size || 0) >= 0, 'point reports a size');
 const fetched = await callMethod(api, ['get'], first.id);
 assert.equal(fetched.description, 'Known-good state');
+const reloaded = loadSnapshot(indexedDB);
+const afterReload = await callMethod(reloaded.api, ['list', 'listRestorePoints']);
+assert.equal(afterReload.length, 1, 'restore point survives a browser reload');
+assert.equal(afterReload[0].name, 'Before game');
 await assert.rejects(() => create(api, 'Before game'), /duplicate|exists|already/i);
 
 // Restoring replaces both opaque kernel images deterministically.
