@@ -192,6 +192,8 @@ const listed = await callMethod(api, ['list', 'listRestorePoints']);
 assert.equal(listed.length, 1);
 assert.equal(listed[0].name, 'Before game');
 assert.ok(Number(listed[0].size || first.size || 0) >= 0, 'point reports a size');
+const fetched = await callMethod(api, ['get'], first.id);
+assert.equal(fetched.description, 'Known-good state');
 await assert.rejects(() => create(api, 'Before game'), /duplicate|exists|already/i);
 
 // Restoring replaces both opaque kernel images deterministically.
