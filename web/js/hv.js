@@ -130,9 +130,10 @@
 
   function partitions() {
     return safe(function () {
-      var out = [], max = wasm.hv_max_partitions(), i;
-      for (i = 1; i <= max; i++) {
-        if (!wasm.hv_partition_field(i, 0)) continue;
+      var out = [], max = wasm.hv_max_partitions(), slot;
+      for (slot = 0; slot < max; slot++) {
+        var i = wasm.hv_partition_id_at(slot);
+        if (!i) continue;
         var vps = [], n = wasm.hv_partition_field(i, 4), k;
         for (k = 0; k < n; k++) vps.push(wasm.hv_partition_vp(i, k));
         var st = wasm.hv_partition_field(i, 1);
@@ -314,14 +315,16 @@
 
   function vmbus() {
     return safe(function () {
-      var out = [], i;
-      for (i = 1; i <= 16; i++) {
+      var out = [], slot;
+      for (slot = 0; slot < 16; slot++) {
+        var i = wasm.hv_vmbus_channel_id_at(slot);
+        if (!i) continue;
         var part = wasm.hv_vmbus_channel_field(i, 0);
         if (!part) continue;
         var st = wasm.hv_vmbus_channel_field(i, 1);
         out.push({
           id: wasm.hv_vmbus_channel_field(i, 9),
-          slot: i,
+          slot: slot,
           partition: part,
           offerLo: wasm.hv_vmbus_channel_field(i, 2) >>> 0,
           offerHi: wasm.hv_vmbus_channel_field(i, 3) >>> 0,
@@ -360,7 +363,10 @@
   function rootVp() { return safe(function () { return wasm.hv_partition_vp(1, 0); }, 0); }
   function channelOf(part) {
     return safe(function () {
-      for (var i = 1; i <= 16; i++) if (wasm.hv_vmbus_channel_field(i, 0) === part) return i;
+      for (var slot = 0; slot < 16; slot++) {
+        var i = wasm.hv_vmbus_channel_id_at(slot);
+        if (i && wasm.hv_vmbus_channel_field(i, 0) === part) return i;
+      }
       return 0;
     }, 0);
   }
@@ -448,7 +454,9 @@
   function drain() {
     if (!wasm) return 0;
     var n = 0, i, k;
-    for (i = 1; i <= 16 && n < 48; i++) {
+    for (var slot = 0; slot < 16 && n < 48; slot++) {
+      i = wasm.hv_vmbus_channel_id_at(slot);
+      if (!i) continue;
       var part = wasm.hv_vmbus_channel_field(i, 0);
       if (!part) continue;
       for (k = 0; k < 8 && n < 48; k++) {

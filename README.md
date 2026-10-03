@@ -2,7 +2,8 @@
 
 A local website that is a faithful reproduction of the Windows 98 desktop, with
 the operating-system state (process table, filesystem, registry, timer queue,
-scheduler) served by a **WebAssembly kernel compiled from C**.
+scheduler, NT executive and a bounded Hyper-V model) served by **WebAssembly
+images compiled from C**.
 
     ./run.sh                     # starts the server on http://127.0.0.1:8098/
 
@@ -27,17 +28,21 @@ the browser's WebAssembly engine. It owns:
 
 JS owns pixels only. `js/kernel.js` is the glue: it instantiates the image,
 moves bytes in and out of its linear memory, and drives the heartbeat. The
-kernel snapshot (filesystem + registry, line-oriented `KFS1`/`KREG1` format
-written and parsed in C) is persisted to IndexedDB, so a reload brings your
-files, wallpaper, sound scheme and icon positions back.
+kernel snapshot (filesystem + registry, line-oriented `KFS1`/`KREG3` format
+written and parsed in C; the registry loader still accepts `KREG1` and `KREG2`)
+is persisted to IndexedDB, so a reload brings your files, wallpaper, sound
+scheme and icon positions back.
 
 If `kernel.wasm` cannot be loaded the desktop still starts on a reduced JS
 fallback and says so — `W98Kernel.mode` is `wasm` or `shim`, and System
 Properties displays which one is live.
 
-    kernel/kernel.c            the kernel
-    tools/build_kernel.sh      clang -> web/wasm/kernel.wasm  (about 32 KB)
-    tools/kernel_test.mjs      node tools/kernel_test.mjs      (96 checks)
+    kernel/kernel.c + nt.c     the Win9x and NT-style kernel layers
+    hypervisor/hv.c + guest.c  the Hyper-V/VBS/VT-x state-machine model
+    tools/build_kernel.sh      clang -> web/wasm/kernel.wasm  (about 137 KiB)
+    tools/build_hv.sh          clang -> web/wasm/hypervisor.wasm (about 113 KiB)
+    tools/kernel_test.mjs      node tools/kernel_test.mjs      (478 checks)
+    tools/hv_test.mjs          node tools/hv_test.mjs          (417 checks)
 
 ## What is on the desktop
 
@@ -79,6 +84,11 @@ Things that really work, end to end:
   the idle timeout from Display Properties; Ctrl+Alt+Del opens the Close
   Program dialog; `CRASH98` in the Run box panics the kernel and shows the blue
   screen.
+* **Executive and hypervisor model** — the NT layer covers VADs, large pages,
+  paging, prototype sections, tagged pool and bounded segment heaps. The
+  Hyper-V image also has a mediated guest-register ISA for signed VTL1 images
+  and nested L2 EPT execution; the browser keeps the legacy guest boot for
+  compatibility and runs entirely from local files.
 
 ## Fidelity notes
 
@@ -126,7 +136,7 @@ applications) is original code.
 ## Layout
 
     kernel/kernel.c          the kernel (C, ~1 250 lines)
-    tools/build_kernel.sh    build + tools/kernel_test.mjs (96 assertions)
+    tools/build_kernel.sh    build + tools/kernel_test.mjs (478 checks)
     tools/serve.py           static server with the COOP/COEP headers WASM wants
     web/index.html           loads the kernel, the shell and the apps
     web/js/kernel.js         syscall glue + snapshot persistence (IndexedDB)
@@ -141,7 +151,9 @@ applications) is original code.
 ## Development
 
     ./tools/build_kernel.sh          # rebuild web/wasm/kernel.wasm
-    node tools/kernel_test.mjs       # exercise every syscall in isolation
+    ./tools/build_hv.sh              # rebuild web/wasm/hypervisor.wasm
+    node tools/kernel_test.mjs       # exercise the NT/kernel ABI
+    node tools/hv_test.mjs           # exercise the Hyper-V/VBS/VT-x ABI
     python3 tools/serve.py -p 8098   # serve
 
 The server sends `Cache-Control: no-store`, so edit → reload always shows the
