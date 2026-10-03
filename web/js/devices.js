@@ -46,19 +46,6 @@
     try { if (W98.reg && typeof W98.reg.set === 'function') W98.reg.set(path, name, value); }
     catch (e) { /* registry is best effort */ }
   }
-  /* W98.reg writes are kept in the live kernel hive and normally flushed by
-     its debounce timer.  Device Manager actions are user-visible state
-     transitions, so ask the public kernel facade to take a snapshot now as
-     well.  This keeps a quick reload from racing the debounce while remaining
-     harmless in the reduced JS shim (where flush resolves false). */
-  function flushPersistence() {
-    try {
-      var k = W98.kernel || global.W98Kernel;
-      if (!k || typeof k.flush !== 'function') return;
-      var p = k.flush();
-      if (p && typeof p.catch === 'function') p.catch(function () { /* best effort */ });
-    } catch (e) { /* persistence is best effort; the live model remains usable */ }
-  }
   function parseBool(v, dflt) {
     if (v == null || v === '') return !!dflt;
     return v === true || v === 1 || v === '1' || String(v).toLowerCase() === 'true';
@@ -153,6 +140,9 @@
     x.removed = false;
     x.hidden = false;
     x.enabled = true;
+    x.pnpState = 'PNP_STARTED';
+    x.powerState = 'D0';
+    x.openHandles = 0;
     x.status = 'OK';
     x.problem = '';
     x.problemCode = x.problemCode == null ? null : x.problemCode;
@@ -211,6 +201,13 @@
     var c = activeConflictFor(d.id);
     d.conflictId = c ? c.id : null;
     if (!d.present || d.removed) {
+      d.pnpState = 'PNP_REMOVED'; d.powerState = 'D3';
+    } else if (d.pnpState === 'PNP_QUERY_REMOVE') {
+      d.powerState = 'D3';
+    } else {
+      d.pnpState = 'PNP_STARTED'; d.powerState = d.enabled ? 'D0' : 'D3';
+    }
+    if (!d.present || d.removed) {
       d.status = 'Removed'; d.problem = 'Device was removed; scan for hardware changes to restore it.';
       return;
     }
@@ -242,6 +239,9 @@
     v = regGet(key, 'DriverVersion', null); if (v != null) d.driverVersion = String(v);
     v = regGet(key, 'DriverMissing', null); if (v != null) d.driverMissing = parseBool(v, d.driverMissing);
     v = regGet(key, 'Enabled', null); if (v != null) d.enabled = parseBool(v, d.enabled);
+    v = regGet(key, 'PnpState', null); if (v != null && v !== '') d.pnpState = String(v);
+    v = regGet(key, 'PowerState', null); if (v != null && v !== '') d.powerState = String(v);
+    v = regGet(key, 'OpenHandles', null); if (v != null) d.openHandles = Math.max(0, parseInt(v, 10) || 0);
     v = regGet(key, 'Present', null); if (v != null) d.present = parseBool(v, d.present);
     v = regGet(key, 'Removed', null); if (v != null) d.removed = parseBool(v, d.removed);
     v = regGet(key, 'Hidden', null); if (v != null) d.hidden = parseBool(v, d.hidden);
@@ -273,6 +273,9 @@
         if (s.driverVersion != null) d.driverVersion = String(s.driverVersion);
         if (s.driverMissing != null) d.driverMissing = !!s.driverMissing;
         if (s.enabled != null) d.enabled = !!s.enabled;
+        if (s.pnpState != null) d.pnpState = String(s.pnpState);
+        if (s.powerState != null) d.powerState = String(s.powerState);
+        if (s.openHandles != null) d.openHandles = Math.max(0, parseInt(s.openHandles, 10) || 0);
         if (s.present != null) d.present = !!s.present;
         if (s.removed != null) d.removed = !!s.removed;
         if (s.hidden != null) d.hidden = !!s.hidden;
@@ -301,6 +304,9 @@
     regSet(key, 'DriverMissing', d.driverMissing ? '1' : '0');
     regSet(key, 'Status', d.status);
     regSet(key, 'Enabled', d.enabled ? '1' : '0');
+    regSet(key, 'PnpState', d.pnpState || 'PNP_STARTED');
+    regSet(key, 'PowerState', d.powerState || (d.enabled ? 'D0' : 'D3'));
+    regSet(key, 'OpenHandles', String(Math.max(0, d.openHandles || 0)));
     regSet(key, 'Present', d.present ? '1' : '0');
     regSet(key, 'Removed', d.removed ? '1' : '0');
     regSet(key, 'Hidden', d.hidden ? '1' : '0');
@@ -316,7 +322,9 @@
       return {
         id: d.id, hardwareId: d.hardwareId, friendlyName: d.friendlyName, class: d.class,
         driverVersion: d.driverVersion || '', driverMissing: !!d.driverMissing,
-        enabled: !!d.enabled, present: !!d.present, removed: !!d.removed, hidden: !!d.hidden,
+        enabled: !!d.enabled, pnpState: d.pnpState || 'PNP_STARTED',
+        powerState: d.powerState || (d.enabled ? 'D0' : 'D3'), openHandles: Math.max(0, d.openHandles || 0),
+        present: !!d.present, removed: !!d.removed, hidden: !!d.hidden,
         parent: d.parent || '', problemCode: d.problemCode == null ? '' : d.problemCode,
         resources: copy(d.resources || []), source: d.source || 'modeled-virtual', virtual: !!d.virtual
       };
@@ -330,7 +338,6 @@
     regSet(META_KEY, 'State', JSON.stringify(stateSnapshot()));
     devices.forEach(persistDevice);
     seeded = true;
-    flushPersistence();
   }
 
   function emit(type, extra) {
@@ -368,7 +375,6 @@
     persistDevice(d); regSet(META_KEY, 'Generation', String(generation));
     regSet(META_KEY, 'Conflicts', JSON.stringify(conflicts));
     regSet(META_KEY, 'State', JSON.stringify(stateSnapshot()));
-    flushPersistence();
     emit(type || 'change', { deviceId: d.id, device: copy(d) });
     return copy(d);
   }
@@ -377,8 +383,37 @@
     var d = find(id); if (!d || !d.present || d.removed || d.id === 'ROOT\\COMPUTER') return false;
     d.enabled = !!value; return touch(d, d.enabled ? 'enable' : 'disable');
   }
+  function openVirtualHandle(id) {
+    var d = find(id);
+    if (!d || !d.present || d.removed || !d.enabled || d.pnpState === 'PNP_QUERY_REMOVE') return false;
+    d.openHandles = Math.max(0, d.openHandles || 0) + 1;
+    return touch(d, 'open-handle');
+  }
+  function closeVirtualHandle(id) {
+    var d = find(id);
+    if (!d || !d.openHandles) return false;
+    d.openHandles--;
+    return touch(d, 'close-handle');
+  }
+  function queryRemove(id) {
+    var d = find(id);
+    if (!d || d.id === 'ROOT\\COMPUTER') return { ok: false, reason: 'invalid-device' };
+    if (!d.present || d.removed) return { ok: false, reason: 'already-removed', status: 'DELETE_PENDING' };
+    if (d.openHandles) return { ok: false, reason: 'open-handles', status: 'DEVICE_BUSY', openHandles: d.openHandles };
+    d.pnpState = 'PNP_QUERY_REMOVE'; d.powerState = 'D3';
+    var out = touch(d, 'query-remove'); out.ok = true; return out;
+  }
+  function cancelQueryRemove(id) {
+    var d = find(id);
+    if (!d || d.pnpState !== 'PNP_QUERY_REMOVE') return false;
+    d.pnpState = 'PNP_STARTED'; d.powerState = d.enabled ? 'D0' : 'D3';
+    return touch(d, 'cancel-remove');
+  }
   function remove(id) {
     var d = find(id); if (!d || d.id === 'ROOT\\COMPUTER') return false;
+    var q = d.pnpState === 'PNP_QUERY_REMOVE' ? { ok: true } : queryRemove(id);
+    if (!q || q.ok !== true) return false;
+    d = find(id);
     d.enabled = false; d.present = false; d.removed = true;
     conflicts.slice().forEach(function (c) { if (!c.resolved && (c.a === d.id || c.b === d.id)) resolveConflict(c.id, true); });
     return touch(d, 'remove');
@@ -387,6 +422,7 @@
     generation++;
     devices.forEach(function (d) {
       if (d.removed || !d.present) { d.removed = false; d.present = true; d.enabled = true; }
+      d.pnpState = 'PNP_ADDED'; d.powerState = 'D3';
       recalc(d); persistDevice(d);
     });
     persistAll(); emit('rescan', { devices: list({ showHidden: true }) });
@@ -465,6 +501,10 @@
     makeConflict: createConflict,
     resolveConflict: resolveConflict,
     clearConflict: resolveConflict,
+    openVirtualHandle: openVirtualHandle,
+    closeVirtualHandle: closeVirtualHandle,
+    queryRemove: queryRemove,
+    cancelQueryRemove: cancelQueryRemove,
     conflicts: conflictList,
     on: function (type, fn) {
       if (typeof type === 'function') { fn = type; type = 'change'; }
@@ -486,11 +526,11 @@
 
   /* Kernel restore happens after scripts have loaded.  Reload the registry
      before seeding defaults, then publish one ready event for Device Manager. */
-  function onKernelReady() {
+  function onKernelReady(event) {
     load();
     if (!seeded) persistAll();
     ready = true;
-    emit('ready', { mode: (global.W98Kernel && global.W98Kernel.mode) || 'unknown' });
+    emit('ready', { mode: event && event.detail && event.detail.mode || 'unknown' });
   }
   if (global.addEventListener) global.addEventListener('w98-kernel-ready', onKernelReady);
   else onKernelReady();

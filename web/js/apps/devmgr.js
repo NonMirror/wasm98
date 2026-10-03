@@ -188,7 +188,13 @@
       function remove() {
         var d = current(), m = model(); if (!d || !m || typeof m.remove !== 'function') return;
         W98.dialog.confirm('Device Manager', 'Remove "' + nameOf(d) + '" from this virtual machine?\n\nThe device can be restored with Scan for hardware changes.').then(function (ok) {
-          if (!ok) return; safe(function () { m.remove(d.id); }, null); selected = null; treeSig = ''; render();
+          if (!ok) return;
+          var result = safe(function () { return m.remove(d.id); }, false);
+          if (result === false) {
+            W98.dialog.alert('Device Manager', 'The device cannot be removed while a virtual handle is open. Close the handle and try again.', 'warn');
+            return;
+          }
+          selected = null; treeSig = ''; render();
         });
       }
       function properties() {
@@ -204,6 +210,8 @@
           if (i === 0) {
             var h = el('div', 'row'); h.style.gap = '8px'; h.appendChild(iconNode(iconFor(d), 32)); h.appendChild(el('div', '', nameOf(d))); body.appendChild(h);
             row('Hardware ID', d.hardwareId); row('Class', classOf(d)); row('Status', statusOf(d)); row('State', d.enabled === false ? 'Disabled' : 'Enabled');
+            row('PnP state', d.pnpState || 'PNP_STARTED'); row('Power state', d.powerState || (d.enabled === false ? 'D3' : 'D0'));
+            row('Open handles', d.openHandles || 0);
             row('Source', sourceLabel(d));
             if (d.hvBacked) row('W98HV', d.hvAvailable ? 'Available (hypervisor-backed metadata)' : 'Unavailable; virtual fixture retained');
             if (d.parent) row('Parent bus', d.parent);
@@ -301,6 +309,8 @@
       function renderNode(node, depth, parent) {
         var li = el('li'); li.dataset.nodeId = node.id;
         var has = node.children && node.children.length > 0; var open = expanded[node.id] !== false;
+        li.tabIndex = 0; li.setAttribute('role', 'treeitem'); li.setAttribute('aria-level', String(depth + 1));
+        if (has) li.setAttribute('aria-expanded', open ? 'true' : 'false');
         var tw = el('div', has ? 'tw' : 'tw empty', has ? (open ? '-' : '+') : ''); li.appendChild(tw);
         var iw = el('span'); var d = node.dev; iw.appendChild(iconNode(d ? (isWarn(d) ? 'warning' : iconFor(d)) : iconFor(node.label), 16)); li.appendChild(iw);
         var label = el('span'); label.textContent = node.label; if (d && (d.enabled === false || d.removed)) label.style.color = '#808080'; li.appendChild(label);
@@ -308,6 +318,30 @@
         if (d) li.dataset.deviceId = d.id;
         li.onclick = function (e) { if (e && e.stopPropagation) e.stopPropagation(); if (d) selected = String(d.id); else selected = null; markSelection(); renderPane(); updateButtons(); win.setMenu(menuDef()); };
         li.ondblclick = function () { if (d) properties(); };
+        li.onkeydown = function (e) {
+          var rows = flat.filter(function (f) { return f.node.getBoundingClientRect().height > 0; });
+          var at = rows.indexOf(flat.filter(function (f) { return f.node === li; })[0]);
+          var target = null;
+          if (e.key === 'ArrowDown' || e.key === 'Down') target = rows[Math.min(rows.length - 1, at + 1)];
+          else if (e.key === 'ArrowUp' || e.key === 'Up') target = rows[Math.max(0, at - 1)];
+          else if (e.key === 'ArrowRight' || e.key === 'Right') {
+            if (has && !open) { expanded[node.id] = true; treeSig = ''; render(); focusTreeNode(node.id); return e.preventDefault(); }
+            if (has && open) target = rows[at + 1];
+          } else if (e.key === 'ArrowLeft' || e.key === 'Left') {
+            if (has && open) { expanded[node.id] = false; treeSig = ''; render(); focusTreeNode(node.id); return e.preventDefault(); }
+            if (parent) {
+              var pf = flat.filter(function (f) { return f.item === parent; })[0];
+              target = pf && rows.indexOf(pf) >= 0 ? pf : null;
+            }
+          } else if (e.key === 'Enter' || e.key === ' ') {
+            if (d) properties(); else if (has) { expanded[node.id] = !open; treeSig = ''; render(); focusTreeNode(node.id); }
+            return e.preventDefault();
+          }
+          if (target) {
+            selected = target.item.dev ? String(target.item.dev.id) : null;
+            target.node.focus(); markSelection(); renderPane(); updateButtons(); win.setMenu(menuDef()); e.preventDefault();
+          }
+        };
         tw.onclick = function (e) { if (e && e.stopPropagation) e.stopPropagation(); if (!has) return; expanded[node.id] = !open; treeSig = ''; render(); };
         flat.push({ node: li, item: node, depth: depth });
         if (has) {
@@ -318,6 +352,9 @@
       }
       function markSelection() {
         flat.forEach(function (f) { f.node.classList.toggle('sel', !!selected && f.item.kind === 'device' && String(f.item.id) === String(selected)); });
+      }
+      function focusTreeNode(id) {
+        for (var i = 0; i < flat.length; i++) if (flat[i].item.id === id) { flat[i].node.focus(); return; }
       }
       function renderPane() {
         var d = current(); page.innerHTML = ''; paneHead.textContent = d ? nameOf(d) : 'Device Manager';
@@ -330,7 +367,7 @@
         var source = sourceLabel(d);
         var note = el('div', 'w98-sunken'); note.style.cssText = 'padding:6px;margin-top:8px'; note.textContent = source + '. Changes are persisted in W98.reg.'; page.appendChild(note);
         var details = el('div', 'col'); details.style.cssText = 'gap:4px;margin-top:10px';
-        [['Hardware ID', d.hardwareId], ['Class', classOf(d)], ['Driver', d.driverVersion || 'Not installed'], ['Enabled', d.enabled === false ? 'No' : 'Yes'], ['Problem code', d.problemCode || d.problem || 'None']].forEach(function (r) { var row = el('div', 'row'); row.style.gap = '8px'; row.appendChild(el('div', '', r[0] + ':')); row.appendChild(el('div', 'grow', r[1] == null || r[1] === '' ? '(none)' : String(r[1]))); details.appendChild(row); });
+        [['Hardware ID', d.hardwareId], ['Class', classOf(d)], ['Driver', d.driverVersion || 'Not installed'], ['Enabled', d.enabled === false ? 'No' : 'Yes'], ['PnP state', d.pnpState || 'PNP_STARTED'], ['Power state', d.powerState || (d.enabled === false ? 'D3' : 'D0')], ['Open handles', d.openHandles || 0], ['Problem code', d.problemCode || d.problem || 'None']].forEach(function (r) { var row = el('div', 'row'); row.style.gap = '8px'; row.appendChild(el('div', '', r[0] + ':')); row.appendChild(el('div', 'grow', r[1] == null || r[1] === '' ? '(none)' : String(r[1]))); details.appendChild(row); });
         if (d.hvBacked) { var hvRow = el('div', 'row'); hvRow.style.gap = '8px'; hvRow.appendChild(el('div', '', 'W98HV:')); hvRow.appendChild(el('div', 'grow', d.hvAvailable ? 'Available (hypervisor-backed metadata)' : 'Unavailable; virtual fixture retained')); details.appendChild(hvRow); }
         page.appendChild(details);
       }
@@ -366,7 +403,8 @@
         ];
       }
       win.setMenu(menuDef());
-      win.on('key', function (e) { if (!e) return; if (e.key === 'F5') { e.preventDefault(); scan(); } });
+      win.claimKeys();
+      win.el.addEventListener('keydown', function (e) { if (!e) return; if (e.key === 'F5') { e.preventDefault(); scan(); } });
       if (model() && typeof model().on === 'function') {
         unsub = safe(function () { return model().on('change', function () { if (!closed) { treeSig = ''; render(); } }); }, null);
       } else if (model() && typeof model().subscribe === 'function') {

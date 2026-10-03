@@ -21,6 +21,20 @@ the complete bounded tree if `W98HV` is missing, fails to load, or reports no
 guest.  A Device Manager action never issues a hypercall and never claims to
 have changed a real browser device.
 
+The merged kernel contains an NT-style PnP and I/O model (`PNP_ADDED`,
+`PNP_STARTED`, `PNP_QUERY_REMOVE`, `PNP_REMOVED`, power states, device handles,
+and cancellable/completable IRPs).  This worktree does not expose a documented
+W98 application wrapper for those device or IRP calls: the shell's public
+contract provides `W98.reg`, while `W98.kernel`/raw WASM exports are not an app
+bridge.  Device Manager therefore keeps its lifecycle fields explicit in the
+virtual adapter.  Enabled records are `PNP_STARTED`/`D0`; disabled records stay
+started but use `D3`; removal records become `PNP_REMOVED`/`D3`, and a rescan
+walks `PNP_ADDED` back to `PNP_STARTED`.  The adapter's bounded
+`openVirtualHandle`, `closeVirtualHandle`, and `queryRemove` helpers model the
+open-handle refusal (`DEVICE_BUSY`) locally so the refusal path is testable
+without pretending that a browser or kernel handle was opened.  IRP cancellation
+and completion remain kernel-only behavior and are not duplicated in the app.
+
 Every initial entry is a **modeled virtual device**.  The UI labels that fact
 explicitly (for example, “Modeled virtual device” or “Virtual hardware”) and
 uses a separate unavailable/driver-warning status for a device whose model is
@@ -80,10 +94,11 @@ The tree supports the three Device Manager arrangements:
 The root and group rows can be expanded/collapsed.  Device rows expose
 Properties, Disable/Enable, Remove, Update Driver, and the rescan command.
 Properties shows the complete persisted record, including the model/source
-label, resources, and any problem code.  Update Driver is a local-only mock
-wizard: it changes the deterministic driver-version string and re-evaluates
-status; it does not download or install software.  Hidden/removed records are
-shown only after **Show hidden devices** is selected.
+label, resources, PnP/power state, virtual open-handle count, and any problem
+code.  Update Driver is a local-only mock wizard: it changes the deterministic
+driver-version string and re-evaluates status; it does not download or install
+software.  Hidden/removed records are shown only after **Show hidden devices**
+is selected.
 
 ## Verification
 
@@ -105,6 +120,9 @@ For a browser smoke test, start `./run.sh`, launch Device Manager, and verify:
 6. assigning a duplicate resource produces a yellow warning, and Resolve
    Resource Conflict clears it;
 7. the same flows remain usable with `W98HV` unavailable.
+8. `openVirtualHandle` followed by Remove returns the deterministic
+   `DEVICE_BUSY` refusal; `closeVirtualHandle` then allows query-remove and
+   Remove, after which Scan for hardware changes restores the record.
 
 The app remains bounded: it only owns the fixed initial device list plus
 records restored from that list, and all generated IDs/resources are stable so
