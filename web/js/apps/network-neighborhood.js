@@ -19,6 +19,8 @@
   var REG = 'HKEY_CURRENT_USER\\Software\\W98\\NetworkNeighborhood';
   var STATES = ['disconnected', 'dialing', 'connected', 'busy', 'failed', 'dropped'];
 
+  function now() { return typeof W98.now === 'function' ? W98.now() : Date.now(); }
+
   /* ---------------------------------------------------------------------- */
   /* Virtual network model                                                  */
   /* ---------------------------------------------------------------------- */
@@ -198,7 +200,7 @@
         if (Array.isArray(opts.peerIds)) connectedIds = opts.peerIds.filter(function (id) { return !!peerById(id) && String(id).toLowerCase() !== 'local'; }).map(String);
         else if (state === 'connected' && !connectedIds.length) connectedIds = allRemoteIds();
         if (state !== 'connected' && !opts.keepPeers) connectedIds = [];
-        if (state === 'connected' && old !== 'connected') startedAt = Number(opts.startedAt) || Date.now();
+        if (state === 'connected' && old !== 'connected') startedAt = Number(opts.startedAt) || now();
         if (state !== 'connected') startedAt = 0;
         changed(old === state ? 'connection-refresh' : 'connection');
         return state;
@@ -215,7 +217,7 @@
         overrides[p.id] = true;
         if (connectedIds.indexOf(p.id) < 0) connectedIds.push(p.id);
         if (state === 'disconnected' || state === 'failed' || state === 'dropped') state = 'connected';
-        if (!startedAt) startedAt = Date.now();
+        if (!startedAt) startedAt = now();
         changed('peer-connected');
         return true;
       },
@@ -299,7 +301,7 @@
           state: state,
           speed: readJson('ConnectionSpeed', '56K'),
           connectedAt: startedAt,
-          durationMs: startedAt && state === 'connected' ? Math.max(0, Date.now() - startedAt) : 0,
+          durationMs: startedAt && state === 'connected' ? Math.max(0, now() - startedAt) : 0,
           peerCount: api.connectedPeers().length
         };
       },

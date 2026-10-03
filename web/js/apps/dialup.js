@@ -64,7 +64,7 @@
     var id = String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
     return id.replace(/^-+|-+$/g, '') || 'connection';
   }
-  function now() { return Date.now(); }
+  function now() { return typeof W98.now === 'function' ? W98.now() : Date.now(); }
 
   /* The registry stores one JSON value per profile, plus a simple index.  The
      individual phone-book values are written too so old-style registry tools
@@ -134,6 +134,7 @@
     speed: 0, durationMs: 0, sequence: 0
   };
   var timers = { dial: null, duration: null, pulse: null, drop: null };
+  var timerHost = null;
   var listeners = [];
 
   function snapshot() {
@@ -174,7 +175,46 @@
     } catch (e2) { /* intranet adapter is optional */ }
   }
   function clearTimer(k) {
-    if (timers[k] != null) { global.clearTimeout(timers[k]); global.clearInterval(timers[k]); timers[k] = null; }
+    var rec = timers[k];
+    if (!rec) return;
+    if (rec.kind === 'raf') {
+      if (typeof rec.cancel === 'function') rec.cancel();
+    } else if (rec.host) {
+      try {
+        if (rec.repeat && typeof rec.host.clearInterval === 'function') rec.host.clearInterval(rec.id);
+        else if (!rec.repeat && typeof rec.host.clearTimeout === 'function') rec.host.clearTimeout(rec.id);
+      } catch (e) { /* a closed window has already released its timers */ }
+    }
+    timers[k] = null;
+  }
+  function schedule(k, fn, ms, repeat) {
+    clearTimer(k);
+    ms = Math.max(1, Number(ms) || 1);
+    if (timerHost && (repeat ? typeof timerHost.setInterval === 'function' : typeof timerHost.setTimeout === 'function')) {
+      var id = repeat ? timerHost.setInterval(fn, ms) : timerHost.setTimeout(fn, ms);
+      timers[k] = { kind: 'window', host: timerHost, id: id, repeat: !!repeat };
+      return timers[k];
+    }
+    /* The service can be driven by the IE adapter without its UI open.  W98.raf
+       is the documented shell scheduler and keeps that path local and
+       functional while the hypervisor is unavailable or not loaded. */
+    if (typeof W98.raf === 'function') {
+      var elapsed = 0, cancel = null;
+      cancel = W98.raf(function (dt) {
+        elapsed += Number(dt) || 16;
+        if (elapsed < ms) return;
+        if (!repeat) {
+          if (cancel) cancel();
+          if (timers[k] && timers[k].kind === 'raf') timers[k] = null;
+        } else {
+          elapsed %= ms;
+        }
+        fn();
+      });
+      timers[k] = { kind: 'raf', cancel: cancel, repeat: !!repeat };
+      return timers[k];
+    }
+    return null;
   }
   function clearTimers() { ['dial', 'duration', 'pulse', 'drop'].forEach(clearTimer); }
   function play(ev) { try { if (W98.sound && W98.sound.play) W98.sound.play(ev); } catch (e) { } }
@@ -235,17 +275,17 @@
     var seq = model.sequence;
     if (prefs.dialingTone) {
       var flip = false;
-      timers.pulse = global.setInterval(function () {
+      schedule('pulse', function () {
         if (seq !== model.sequence || model.state !== 'dialing') return;
         flip = !flip; tone(flip ? 420 : 520, 85);
         notify('dialing');
-      }, 280);
+      }, 280, true);
     }
     var delay = Math.max(250, Number(options.delayMs != null ? options.delayMs : p.delayMs) || 1500);
     if (delay > prefs.timeoutMs && !options.outcome && (!p.outcome || p.outcome === 'connected')) {
-      timers.dial = global.setTimeout(function () { if (seq === model.sequence) fail('Connection timed out.'); }, prefs.timeoutMs);
+      schedule('dial', function () { if (seq === model.sequence) fail('Connection timed out.'); }, prefs.timeoutMs, false);
     } else {
-      timers.dial = global.setTimeout(function () {
+      schedule('dial', function () {
         if (seq !== model.sequence || model.state !== 'dialing') return;
         var outcome = String(options.outcome || options.state || p.outcome || 'connected').toLowerCase();
         if (outcome === 'timeout' || outcome === 'timedout') return fail('The remote computer did not respond.');
@@ -257,14 +297,14 @@
         model.connectedAt = now();
         setState('connected');
         play('Notify');
-        timers.duration = global.setInterval(function () {
+        schedule('duration', function () {
           if (model.state !== 'connected') return;
           notify('duration');
-        }, 1000);
+        }, 1000, true);
         var drop = Number(options.dropAfterMs != null ? options.dropAfterMs : p.dropAfterMs);
         if (outcome === 'dropped' && !(drop > 0)) drop = 450;
-        if (drop > 0) timers.drop = global.setTimeout(function () { if (seq === model.sequence) dropConnection('The connection was dropped.'); }, drop);
-      }, delay);
+        if (drop > 0) schedule('drop', function () { if (seq === model.sequence) dropConnection('The connection was dropped.'); }, drop, false);
+      }, delay, false);
     }
     notify('dial');
     return true;
@@ -381,9 +421,11 @@
   var CSS = '@keyframes du-spin{to{transform:rotate(360deg)}}' +
     '.du-root{display:flex;flex-direction:column;height:100%;width:100%;font:11px Tahoma,"MS Sans Serif",sans-serif;background:#c0c0c0}' +
     '.du-root *{box-sizing:border-box}.du-body{display:flex;gap:7px;padding:8px;flex:1;min-height:0}.du-list{width:175px;display:flex;flex-direction:column;gap:4px}.du-list select{flex:1;min-height:100px}.du-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}.du-panel{padding:7px;background:#c0c0c0;border:1px solid #808080;box-shadow:inset 1px 1px #fff}.du-row{display:flex;align-items:center;gap:5px}.du-row label{width:92px}.du-grow{flex:1}.du-state{font:bold 13px Tahoma;color:#000080}.du-spinner{display:inline-block;width:11px;height:11px;border:2px dotted #000080;border-radius:50%;margin-right:4px;vertical-align:-1px;animation:du-spin .7s steps(8,end) infinite}.du-buttons{display:flex;justify-content:flex-end;gap:5px;padding:7px}.du-buttons button{min-width:70px}.du-note{color:#404040}.du-error{color:#800000}.du-tabs{display:flex;gap:4px;padding:5px 7px 0}.du-tabs button.active{font-weight:bold}.du-hidden{display:none}';
+  var cssInstalled = false;
   function css() {
-    if (document.getElementById('w98app-dialup')) return;
+    if (cssInstalled) return;
     var st = document.createElement('style'); st.id = 'w98app-dialup'; st.textContent = CSS; document.head.appendChild(st);
+    cssInstalled = true;
   }
   function button(label, fn) { var b = el('button', '', esc(label)); b.onclick = fn; return b; }
   function input(value, type) { var i = el('input'); i.type = type || 'text'; i.value = value == null ? '' : value; return i; }
@@ -392,7 +434,7 @@
     id: 'dialup', title: 'Dial-Up Networking', icon: 'dial-up', width: 535, height: 390,
     minWidth: 450, minHeight: 330, desktop: false, singleton: true, startMenuGroup: 'Programs',
     create: function (win, args) {
-      css(); args = args || {};
+      css(); timerHost = win; args = args || {};
       var selected = profileFor(args.profile || prefs.lastProfile) || profiles[0];
       var root = el('div', 'du-root'); win.el.appendChild(root);
       var tabs = el('div', 'du-tabs'), bConn = button('Connections', function () { showTab('connections'); }), bModem = button('Modem Properties', function () { showTab('modem'); });
@@ -472,7 +514,7 @@
       sel.onchange = function () { selected = profileFor(sel.value); renderProfile(); };
       var unsubscribe = service.subscribe(function () { renderProfile(); });
       renderProfiles(); showTab(args.tab === 'modem' ? 'modem' : 'connections');
-      return { onClose: function () { unsubscribe(); } };
+      return { onClose: function () { unsubscribe(); if (timerHost === win) timerHost = null; } };
     }
   });
 })(window);

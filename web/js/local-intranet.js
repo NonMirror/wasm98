@@ -273,9 +273,20 @@
 
   /* Boot can load this file before kernel.wasm has mounted its file system.
      Retry briefly without doing I/O until the shell reports that it is ready. */
+  function retryAfter(ms, fn) {
+    if (typeof W98.raf !== 'function') return false;
+    var elapsed = 0, cancel = null;
+    cancel = W98.raf(function (dt) {
+      elapsed += Number(dt) || 16;
+      if (elapsed < ms) return;
+      if (cancel) cancel();
+      fn();
+    });
+    return true;
+  }
   function seedWhenReady(tries) {
     if (ensureSeeded() || tries <= 0) return;
-    if (typeof global.setTimeout === 'function') global.setTimeout(function () { seedWhenReady(tries - 1); }, 100);
+    retryAfter(100, function () { seedWhenReady(tries - 1); });
   }
   seedWhenReady(100);
   global.W98LocalIntranet = api;
