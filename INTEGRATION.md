@@ -4,7 +4,9 @@ The desktop keeps the host boundary in `web/js/host-file-bridge.js`.  A browser
 picker is the only way to obtain host files: the bridge uses an ordinary file
 input for a file collection and the browser's explicit directory-selection mode
 for a directory.  It never scans a host path, makes a network request, or stores
-host bytes in `localStorage`.
+host bytes in `localStorage`.  Selected C: imports also get a bounded local
+IndexedDB recovery record.  On reload the bridge restores a missing C: file from
+that record only; it never persists or reopens a host picker by itself.
 
 ## Media model
 
@@ -23,6 +25,11 @@ read-only by default; a write attempt returns a Win98-style write-protected
 error.  A full medium returns a disk-full error.  Eject removes the floppy app's
 materialized tree and invalidates both app generations and bridge media tokens,
 so old paths cannot be used after ejection.
+
+Host collections are bounded to 4,096 files, 4 MiB per file, an 8 MiB transfer,
+and the kernel's 260-character path limit.  The limits are checked before an
+`arrayBuffer()` read when the browser provides a file size, and checked again
+after the bytes arrive.
 
 ## App and shell integration
 

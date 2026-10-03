@@ -20,6 +20,9 @@
   var CDROM = 'cdrom';
   var ROOT = { floppy: 'A:\\', cdrom: 'D:\\' };
   var CAPACITY = { floppy: 1474560, cdrom: 700 * 1024 * 1024 };
+  var MAX_FILES = 4096;
+  var MAX_FILE_BYTES = 4 * 1024 * 1024;
+  var MAX_PATH_CHARS = 259;
   var oldFs = W98.fs;
   var internalWrite = false;
   var listeners = [];
@@ -191,19 +194,32 @@
   function readFileBytes(file) {
     if (file == null) return Promise.resolve(new Uint8Array(0));
     var source = file.file || file;
+    var declared = toBytes(file.size != null ? file.size : source && source.size);
+    if (declared > MAX_FILE_BYTES) return Promise.reject(err('FILE_TOO_LARGE', 'A selected file exceeds the 4 MiB Windows 98 file limit.'));
+    function checked(bytes) {
+      bytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      if (bytes.length > MAX_FILE_BYTES) return Promise.reject(err('FILE_TOO_LARGE', 'A selected file exceeds the 4 MiB Windows 98 file limit.'));
+      return Promise.resolve(bytes);
+    }
     function byteLike(v) { return v && typeof v.byteLength === 'number' && v.buffer; }
-    if (byteLike(file.data)) return Promise.resolve(new Uint8Array(file.data));
-    if (byteLike(file.bytes)) return Promise.resolve(new Uint8Array(file.bytes));
-    if (byteLike(source.data)) return Promise.resolve(new Uint8Array(source.data));
-    if (byteLike(source.bytes)) return Promise.resolve(new Uint8Array(source.bytes));
-    if (source.arrayBuffer) return Promise.resolve(source.arrayBuffer()).then(function (b) { return new Uint8Array(b); });
-    if (source.buffer && typeof source.byteLength === 'number') return Promise.resolve(new Uint8Array(source.buffer, source.byteOffset || 0, source.byteLength));
+    if (byteLike(file.data)) return checked(file.data);
+    if (byteLike(file.bytes)) return checked(file.bytes);
+    if (byteLike(source.data)) return checked(source.data);
+    if (byteLike(source.bytes)) return checked(source.bytes);
+    if (source.arrayBuffer) return Promise.resolve(source.arrayBuffer()).then(checked);
+    if (source.buffer && typeof source.byteLength === 'number') return checked(new Uint8Array(source.buffer, source.byteOffset || 0, source.byteLength));
     return Promise.reject(new Error('The selected item is not a browser File.'));
   }
   function insert(type, files, opts) {
     type = driveType(type); opts = opts || {};
-    var list = filesToArray(files), mediumFiles = uniqueNames(list);
+    var list = filesToArray(files);
+    if (list.length > MAX_FILES) return Promise.reject(err('TRANSFER_LIMIT', 'The selected collection contains too many files.'));
+    if (list.some(function (f) { return toBytes(f && (f.size != null ? f.size : f.file && f.file.size)) > MAX_FILE_BYTES; })) {
+      return Promise.reject(err('FILE_TOO_LARGE', 'A selected file exceeds the 4 MiB Windows 98 file limit.'));
+    }
+    var mediumFiles = uniqueNames(list);
     if (!mediumFiles.length) return Promise.reject(err('NO_MEDIA', 'Please choose at least one file or directory.'));
+    if (mediumFiles.some(function (f) { return String(f.path).length > MAX_PATH_CHARS; })) return Promise.reject(err('INVALID_PATH', 'A selected file path is too long for the guest filesystem.'));
     var cap = toBytes(opts.capacity || CAPACITY[type]);
     var total = mediumFiles.reduce(function (n, f) { return n + f.size; }, 0);
     if (total > cap) return Promise.reject(err('DISK_FULL', 'There is not enough space on the disk.', { used: total, capacity: cap }));
@@ -227,8 +243,9 @@
     state[type] = medium;
     var seenDirs = {};
     internalWrite = true;
-    return Promise.all(mediumFiles.map(function (entry) {
-      return readFileBytes(entry.source).then(function (bytes) {
+    var copy = mediumFiles.reduce(function (chain, entry) {
+      return chain.then(function () { return readFileBytes(entry.source).then(function (bytes) {
+        if (bytes.length > MAX_FILE_BYTES) throw err('FILE_TOO_LARGE', 'A selected file exceeds the 4 MiB Windows 98 file limit.');
         if (medium.used + bytes.length > medium.capacity) {
           throw err('DISK_FULL', 'There is not enough space on the disk.', { used: medium.used + bytes.length, capacity: medium.capacity });
         }
@@ -243,8 +260,9 @@
         medium.paths.push(full);
         medium.used += bytes.length;
         medium.free = Math.max(0, medium.capacity - medium.used);
-      });
-    })).then(function () {
+      }); });
+    }, Promise.resolve());
+    return copy.then(function () {
       internalWrite = false;
       state.lastError = null;
       notify('insert', medium);

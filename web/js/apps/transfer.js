@@ -24,7 +24,10 @@
   };
   function tel(tag, cls, text) { var n = el(tag, cls); if (text != null) n.textContent = String(text); return n; }
   var DEST = 'C:\\My Documents';
-  var MAX_IMPORT_FILES = 10000;
+  var MAX_IMPORT_FILES = 4096;
+  var MAX_FILE_BYTES = 4 * 1024 * 1024;
+  var MAX_TRANSFER_BYTES = 8 * 1024 * 1024;
+  var MAX_PATH_CHARS = 259;
 
   function bridge() {
     return W98.hostFiles || global.W98HostFileBridge || global.hostFileBridge || null;
@@ -98,7 +101,11 @@
     if (items.files) items = items.files;
     if (typeof items.length === 'number' && !items.name && !items.file) items = Array.prototype.slice.call(items);
     if (!Array.isArray(items)) items = [items];
-    return items.filter(Boolean).slice(0, MAX_IMPORT_FILES).map(function (f) {
+    items = items.filter(Boolean);
+    if (items.length > MAX_IMPORT_FILES) {
+      var countError = new Error('The selected collection contains too many files.'); countError.code = 'TRANSFER_LIMIT'; throw countError;
+    }
+    return items.map(function (f) {
       var item = f.file ? Object.assign({}, f) : { file: f };
       item.name = item.name || (f && f.name) || 'Untitled';
       item.webkitRelativePath = item.webkitRelativePath || (f && f.webkitRelativePath) || '';
@@ -162,8 +169,18 @@
           var parts = rel.split('\\'), name = parts.pop() || 'Untitled';
           var dir = destination;
           parts.forEach(function (part) { dir = pathJoin(dir, part); });
+          var target = pathJoin(dir, name);
+          if (target.length > MAX_PATH_CHARS) {
+            var pathError = new Error('The selected file path is too long for Windows 98.'); pathError.code = 'INVALID_PATH'; throw pathError;
+          }
+          if (Number(item.file && item.file.size || item.size) > MAX_FILE_BYTES) {
+            var sizeError = new Error('The selected file exceeds the 4 MiB Windows 98 file limit.'); sizeError.code = 'FILE_TOO_LARGE'; throw sizeError;
+          }
           return ensureDir(dir, fs).then(function () { return readHostBytes(item); }).then(function (data) {
-            var path = pathJoin(dir, name), result;
+            if (data.length > MAX_FILE_BYTES || report.bytes + data.length > MAX_TRANSFER_BYTES) {
+              var transferError = new Error('The selected transfer exceeds the 8 MiB session limit.'); transferError.code = 'TRANSFER_LIMIT'; throw transferError;
+            }
+            var path = target, result;
             try { result = fs.writeBytes(path, data); } catch (e) { throw e; }
             if (result != null && Number(result) < 0) {
               var er = new Error(result === -28 ? 'There is not enough space on the disk.' : 'The disk is write-protected.');

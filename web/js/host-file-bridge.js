@@ -18,6 +18,16 @@
   var MANIFEST_KIND = 'w98-host-media';
   var DEFAULT_FLOPPY_CAPACITY = 1440 * 1024;       /* 1.44 MB */
   var DEFAULT_CDROM_CAPACITY = 700 * 1024 * 1024;  /* 700 MB */
+  /* Keep host reads within the kernel's documented filesystem bounds.  These
+     are also a guard against a malformed File-like object claiming an
+     unbounded size before arrayBuffer() is called. */
+  var MAX_FILES = 4096;
+  var MAX_FILE_BYTES = 4 * 1024 * 1024;
+  var MAX_TRANSFER_BYTES = 8 * 1024 * 1024;
+  var MAX_PATH_CHARS = 259;
+  var PERSIST_DB = 'w98-host-exchange';
+  var PERSIST_STORE = 'guest-files';
+  var persistenceStarted = false;
   var textDecoder = typeof TextDecoder === 'function' ? new TextDecoder() : null;
   var textEncoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
   var mediaSerial = 0;
@@ -181,10 +191,17 @@
   }
 
   function readHostFile(rec) {
-    if (rec.data != null) return Promise.resolve(cloneBytes(rec.data));
     var f = rec.file || rec;
-    if (f && typeof f.arrayBuffer === 'function') return Promise.resolve(f.arrayBuffer()).then(function (b) { return new Uint8Array(b); });
-    if (f && f.data != null) return Promise.resolve(cloneBytes(f.data));
+    var declared = Number(f && f.size);
+    if (isFinite(declared) && declared > MAX_FILE_BYTES) return Promise.reject(error('FILE_TOO_LARGE', 'The selected file exceeds the 4 MiB Windows 98 file limit.', rec.path));
+    function checked(bytes) {
+      bytes = cloneBytes(bytes);
+      if (bytes.length > MAX_FILE_BYTES) return Promise.reject(error('FILE_TOO_LARGE', 'The selected file exceeds the 4 MiB Windows 98 file limit.', rec.path));
+      return Promise.resolve(bytes);
+    }
+    if (rec.data != null) return checked(rec.data);
+    if (f && typeof f.arrayBuffer === 'function') return Promise.resolve(f.arrayBuffer()).then(checked);
+    if (f && f.data != null) return checked(f.data);
     return Promise.reject(error('UNREADABLE', 'The selected host file cannot be read.', rec.path));
   }
 
@@ -201,9 +218,11 @@
     var listeners = [];
     var writable = !meta.writeProtected && options.mutable !== false;
     function ensure() { if (!mounted) throw error('EJECTED', 'The media in drive ' + meta.root.slice(0, 2) + ' has been ejected.'); }
+    function inRoot(path) { return pathKey(path).slice(0, 2) === pathKey(meta.root).slice(0, 2); }
     function resolve(path) {
       ensure();
       var p = normPath(path, meta.root), k = pathKey(p);
+      if (!inRoot(p)) throw error('INVALID_PATH', 'The path is outside the mounted medium.', p);
       if (k === pathKey(meta.root)) return { path: meta.root, dir: true };
       var r = records[k];
       if (r) return r;
@@ -258,10 +277,16 @@
       write: function (path, data) {
         ensure();
         if (!writable || meta.writeProtected) return Promise.reject(error('WRITE_PROTECTED', 'The disk is write-protected.', path));
-        var bytes = cloneBytes(data), old = records[pathKey(path)], oldSize = old ? (old.size || 0) : 0;
+        var declared = Number(data && data.byteLength != null ? data.byteLength : data && data.length);
+        if (isFinite(declared) && declared > MAX_FILE_BYTES) return Promise.reject(error('FILE_TOO_LARGE', 'The file exceeds the 4 MiB Windows 98 file limit.', path));
+        var p = normPath(path, meta.root);
+        if (!inRoot(p)) return Promise.reject(error('INVALID_PATH', 'The path is outside the mounted medium.', p));
+        var bytes = cloneBytes(data);
+        if (bytes.length > MAX_FILE_BYTES) return Promise.reject(error('FILE_TOO_LARGE', 'The file exceeds the 4 MiB Windows 98 file limit.', p));
+        var old = records[pathKey(p)], oldSize = old ? (old.size || 0) : 0;
         var used = ordered.reduce(function (n, r) { return n + (r.size || 0); }, 0) - oldSize + bytes.length;
-        if (used > meta.capacity) return Promise.reject(error('DISK_FULL', 'There is not enough space on the disk.', path));
-        var p = normPath(path, meta.root), r = old || { path: p, name: p.split('\\').pop(), relativePath: relativePath(p, meta.root), lastModified: Date.now(), type: '', file: null };
+        if (used > meta.capacity) return Promise.reject(error('DISK_FULL', 'There is not enough space on the disk.', p));
+        var r = old || { path: p, name: p.split('\\').pop(), relativePath: relativePath(p, meta.root), lastModified: Date.now(), type: '', file: null };
         r.data = bytes; r.size = bytes.length; if (!old) { records[pathKey(p)] = r; ordered.push(r); ordered.sort(sortRecords); }
         meta.used = used; meta.free = Math.max(0, meta.capacity - used); emit('write');
         return Promise.resolve(bytes.length);
@@ -304,7 +329,10 @@
     options = options || {};
     var list = asArray(files);
     if (!list.length) return Promise.reject(error('NO_FILES', 'Select at least one file before mounting media.'));
+    if (list.length > MAX_FILES) return Promise.reject(error('TRANSFER_LIMIT', 'The selected collection contains too many files.', ''));
     var p = makeManifest(list, options);
+    if (p.records.some(function (r) { return r.size > MAX_FILE_BYTES; })) return Promise.reject(error('FILE_TOO_LARGE', 'A selected file exceeds the 4 MiB Windows 98 file limit.', p.meta.root));
+    if (p.records.some(function (r) { return String(r.path).length > MAX_PATH_CHARS; })) return Promise.reject(error('INVALID_PATH', 'A selected file path is too long for the guest filesystem.', p.meta.root));
     if (p.meta.used > p.meta.capacity) {
       return Promise.reject(error('DISK_FULL', 'There is not enough space on the selected medium.', p.meta.root));
     }
@@ -330,6 +358,81 @@
     if (global.W98 && global.W98.fs) return global.W98.fs;
     throw error('NO_GUEST_FS', 'The Windows 98 filesystem is not ready.');
   }
+  function persistDb() {
+    if (!global.indexedDB) return Promise.resolve(null);
+    return new Promise(function (resolve) {
+      var req;
+      try { req = global.indexedDB.open(PERSIST_DB, 1); } catch (e) { resolve(null); return; }
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains(PERSIST_STORE)) db.createObjectStore(PERSIST_STORE, { keyPath: 'path' });
+      };
+      req.onerror = function () { resolve(null); };
+      req.onblocked = function () { resolve(null); };
+      req.onsuccess = function () { resolve(req.result); };
+    });
+  }
+  function persistGuestFiles(entries) {
+    entries = (entries || []).filter(function (entry) {
+      return entry && /^C:\\/i.test(String(entry.path || '')) && entry.bytes && entry.bytes.length <= MAX_FILE_BYTES;
+    });
+    if (!entries.length) return Promise.resolve(false);
+    return persistDb().then(function (db) {
+      if (!db) return false;
+      return new Promise(function (resolve) {
+        var tx;
+        try { tx = db.transaction(PERSIST_STORE, 'readwrite'); } catch (e) { db.close(); resolve(false); return; }
+        var store = tx.objectStore(PERSIST_STORE);
+        entries.forEach(function (entry) {
+          var bytes = cloneBytes(entry.bytes);
+          store.put({ path: String(entry.path), bytes: bytes.buffer, size: bytes.length });
+        });
+        tx.oncomplete = function () { db.close(); resolve(true); };
+        tx.onerror = function () { db.close(); resolve(false); };
+        tx.onabort = function () { db.close(); resolve(false); };
+      });
+    });
+  }
+  function restoreGuestFiles() {
+    if (persistenceStarted) return Promise.resolve(false);
+    persistenceStarted = true;
+    var fs;
+    try { fs = fsFor({}); } catch (e) { return Promise.resolve(false); }
+    return persistDb().then(function (db) {
+      if (!db) return false;
+      return new Promise(function (resolve) {
+        var tx;
+        try { tx = db.transaction(PERSIST_STORE, 'readonly'); } catch (e) { db.close(); resolve(false); return; }
+        var request = tx.objectStore(PERSIST_STORE).getAll ? tx.objectStore(PERSIST_STORE).getAll() : null;
+        function apply(rows) {
+          var restored = 0;
+          (rows || []).slice(0, MAX_FILES).forEach(function (row) {
+            if (!row || !/^C:\\/i.test(String(row.path || '')) || String(row.path).length > MAX_PATH_CHARS || fs.exists(row.path)) return;
+            var bytes = row.bytes instanceof ArrayBuffer ? new Uint8Array(row.bytes) : cloneBytes(row.bytes);
+            if (bytes.length > MAX_FILE_BYTES) return;
+            try {
+              var result = fs.writeBytes(row.path, bytes);
+              if (typeof result !== 'number' || result >= 0) restored++;
+            } catch (e) { /* a full or malformed guest volume is left unchanged */ }
+          });
+          db.close(); resolve(restored > 0);
+        }
+        if (request) {
+          request.onsuccess = function () { apply(request.result || []); };
+          request.onerror = function () { db.close(); resolve(false); };
+        } else {
+          var rows = [];
+          var cursor = tx.objectStore(PERSIST_STORE).openCursor();
+          cursor.onsuccess = function () {
+            var c = cursor.result;
+            if (!c || rows.length >= MAX_FILES) { apply(rows); return; }
+            rows.push(c.value); c.continue();
+          };
+          cursor.onerror = function () { db.close(); resolve(false); };
+        }
+      });
+    });
+  }
   function ensureGuestDir(fs, path) {
     var p = normPath(path), bits = p.split('\\'), cur = bits.shift() + '\\';
     return bits.reduce(function (chain, bit) {
@@ -349,21 +452,33 @@
     var records;
     if (media) records = (media.manifest.files || []).slice();
     else records = makeManifest(asArray(source), options).records;
+    if (records.length > MAX_FILES) return Promise.reject(error('TRANSFER_LIMIT', 'The selected collection contains too many files.', dest));
+    if (records.some(function (r) { return String(r.path || '').length > MAX_PATH_CHARS; })) return Promise.reject(error('INVALID_PATH', 'A selected file path is too long for the guest filesystem.', dest));
+    if (records.some(function (r) { return Number(r.size) > MAX_FILE_BYTES; })) return Promise.reject(error('FILE_TOO_LARGE', 'A selected file exceeds the 4 MiB Windows 98 file limit.', dest));
+    var declaredTotal = records.reduce(function (n, r) { return n + Math.max(0, Number(r.size) || 0); }, 0);
+    if (declaredTotal > MAX_TRANSFER_BYTES) return Promise.reject(error('TRANSFER_LIMIT', 'The selected transfer exceeds the 8 MiB session limit.', dest));
     records.sort(sortRecords);
-    var total = 0, copied = [];
+    var total = 0, copied = [], persisted = [];
     return records.reduce(function (chain, rec) {
       return chain.then(function () {
         var rel = rec.relativePath || rec.name || String(rec.path).replace(/^.*\\/, '');
         var target = joinPath(dest, rel);
+        if (target.length > MAX_PATH_CHARS) throw error('INVALID_PATH', 'A selected file path is too long for the guest filesystem.', target);
         var parent = target.slice(0, target.lastIndexOf('\\')) || dest;
         var read = media ? media.read(rec.path) : readHostFile(rec);
         return ensureGuestDir(fs, parent).then(function () { return Promise.resolve(read); }).then(function (bytes) {
+          if (bytes.length > MAX_FILE_BYTES || total + bytes.length > MAX_TRANSFER_BYTES) throw error('TRANSFER_LIMIT', 'The selected transfer exceeds the 8 MiB session limit.', target);
           var result = fs.writeBytes(target, bytes);
           if (typeof result === 'number' && result < 0) throw error('DISK_FULL', 'There is not enough space on the hard disk.', target);
           total += bytes.length; copied.push({ source: rec.path, path: target, size: bytes.length });
+          if (/^C:\\/i.test(target)) persisted.push({ path: target, bytes: bytes });
         });
       });
-    }, Promise.resolve()).then(function () { return { count: copied.length, bytes: total, files: copied, destination: dest }; });
+    }, Promise.resolve()).then(function () {
+      return persistGuestFiles(persisted).then(function (persistent) {
+        return { count: copied.length, bytes: total, files: copied, destination: dest, persistent: persistent };
+      });
+    });
   }
 
   function downloadBytes(bytes, name, type) {
@@ -412,6 +527,7 @@
 
   API = {
     VERSION: VERSION, version: VERSION, MANIFEST_KIND: MANIFEST_KIND,
+    limits: { maxFiles: MAX_FILES, maxFileBytes: MAX_FILE_BYTES, maxTransferBytes: MAX_TRANSFER_BYTES, maxPathChars: MAX_PATH_CHARS },
     Error: BridgeError, errors: { EJECTED: 'EJECTED', WRITE_PROTECTED: 'WRITE_PROTECTED', DISK_FULL: 'DISK_FULL', NOT_FOUND: 'NOT_FOUND' },
     normalizePath: normPath, makeManifest: function (files, options) { return makeManifest(files, options || {}).meta; },
     pickFiles: picker, pick: picker, mount: mount, mountMedia: mount,
@@ -477,5 +593,8 @@
     }
   });
   if (global.addEventListener) global.addEventListener('w98-shell-ready', attach);
+  if (global.addEventListener) global.addEventListener('w98-kernel-ready', function () {
+    restoreGuestFiles().catch(function () { return false; });
+  });
   if (typeof module === 'object' && module.exports) module.exports = API;
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
