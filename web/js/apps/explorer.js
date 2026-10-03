@@ -6,6 +6,33 @@
   var W98 = window.W98, I = window.W98Icons, U = W98.util;
   var el = U.el, esc = U.escapeHtml, clamp = U.clamp;
 
+  /* Host media is optional: Explorer remains usable with the plain VFS. */
+  function mediaStatus(drive) {
+    var h = W98.hostFiles || window.W98HostFileBridge;
+    try {
+      if (W98.media && typeof W98.media.status === 'function') {
+        var owned = W98.media.status(drive);
+        if (owned) return owned;
+      }
+      if (h && typeof h.status === 'function') return h.status(drive);
+      if (W98.media && typeof W98.media.state === 'function') {
+        var s = W98.media.state(); return s[drive === 'A' ? 'floppy' : 'cdrom'] || null;
+      }
+    } catch (e) { /* media may have been ejected between frames */ }
+    return null;
+  }
+  function showFsError(title, path) {
+    var h = W98.hostFiles || window.W98HostFileBridge;
+    var e = /^[AD]:/i.test(String(path || '')) && W98.media && typeof W98.media.lastError === 'function'
+      ? W98.media.lastError() : (h && h.lastError);
+    if (e && e.message) W98.dialog.alert(title || 'Windows', e.message, 'error');
+    return !!e;
+  }
+  function mutationFailed(result, title, path) {
+    if (typeof result === 'number' && result < 0) { showFsError(title, path); return true; }
+    return false;
+  }
+
   var VIEWS = { large: 'Large Icons', small: 'Small Icons', list: 'List', details: 'Details' };
   var clip = { op: null, items: [] };
 
@@ -37,6 +64,15 @@
         hi: -1,
         sel: []
       };
+      function ejectFloppy() {
+        var h = W98.hostFiles || window.W98HostFileBridge;
+        try {
+          var r = h && typeof h.eject === 'function' ? h.eject('A') :
+            (W98.media && typeof W98.media.eject === 'function' ? W98.media.eject('floppy') : null);
+          if (r && typeof r.then === 'function') r.then(function () { render(); });
+          else render();
+        } catch (e) { W98.dialog.alert('Floppy (A:)', e.message || 'The floppy could not be ejected.', 'error'); }
+      }
       if (state.path === 'C:\\' && !args.special) state.special = 'computer';
 
       /* ---------------- chrome ---------------- */
@@ -58,6 +94,26 @@
       viewHost.style.background = '#fff';
       viewHost.style.boxShadow = 'inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a';
       viewHost.style.margin = '2px';
+      /* A host drop is routed only to an actual guest folder.  No host path is
+         inferred or scanned: the browser supplies the File objects in the
+         drop event and the bridge consumes exactly those objects. */
+      viewHost.addEventListener('dragover', function (e) {
+        if (/^[Cc]:\\/.test(state.path) || /^[AaDd]:\\/.test(state.path)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      });
+      viewHost.addEventListener('drop', function (e) {
+        if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return;
+        if (!/^[Cc]:\\/.test(state.path)) return;
+        e.preventDefault();
+        var h = W98.hostFiles || window.W98HostFileBridge;
+        if (!h || typeof h.importToGuest !== 'function') return;
+        h.importToGuest(e.dataTransfer.files, state.path).then(function (r) {
+          render();
+          if (r && r.errors && r.errors.length) W98.dialog.alert('Copy to ' + state.path, r.errors.join('\n'), 'error');
+        }).catch(function (err) { W98.dialog.alert('Copy to ' + state.path, err.message || String(err), 'error'); });
+      });
 
       win.el.style.display = 'flex';
       win.el.style.flexDirection = 'column';
@@ -102,6 +158,10 @@
               { type: 'sep' },
               { label: '&New', items: [{ label: '&Folder', onclick: newFolder }, { label: '&Text Document', onclick: newText }] },
               { label: 'Create &Shortcut', disabled: !state.sel.length, onclick: makeShortcut },
+              { label: '&Insert Floppy...', onclick: function () { W98.launch('floppy'); } },
+              { label: '&Host File Transfer...', onclick: function () { W98.launch('transfer', { paths: state.sel.map(function (s) { return s.it.path; }) }); } },
+              { label: 'E&ject Floppy', onclick: function () { ejectFloppy(); } },
+              { type: 'sep' },
               { label: '&Delete', disabled: !state.sel.length, onclick: doDelete },
               { label: 'Rena&me', disabled: state.sel.length !== 1, onclick: renameSel },
               { label: 'P&roperties', onclick: showProperties },
@@ -195,8 +255,11 @@
       function items() {
         var out = [];
         if (state.special === 'computer') {
-          out.push({ name: '3\u00bd Floppy (A:)', icon: 'floppy-3-5', kind: 'drive', path: 'A:\\', type: '3\u00bd Inch Floppy Disk' });
+          var floppy = mediaStatus('A');
+          out.push({ name: floppy && floppy.label ? floppy.label + ' (A:)' : '3\u00bd Floppy (A:)', icon: 'floppy-3-5', kind: 'drive', path: 'A:\\', type: '3\u00bd Inch Floppy Disk', used: floppy && floppy.used, total: floppy && floppy.capacity, media: floppy });
           out.push({ name: '(C:)', icon: 'hard-disk', kind: 'drive', path: 'C:\\', type: 'Local Disk', used: W98.stats().BYTES, total: 2 * 1024 * 1024 * 1024 });
+          var cd = mediaStatus('D');
+          if (cd && (cd.mounted !== false)) out.push({ name: (cd.label || 'Virtual CD-ROM') + ' (D:)', icon: 'cdrom', kind: 'drive', path: 'D:\\', type: 'Virtual CD-ROM (read-only)', used: cd.used, total: cd.capacity, media: cd });
           ['Control Panel', 'Printers', 'Dial-Up Networking', 'Scheduled Tasks', 'Web Folders'].forEach(function (n) {
             out.push({ name: n, icon: registryIcon(n), kind: 'folder', special: n, type: n === 'Web Folders' ? 'Folder' : 'System Folder' });
           });
@@ -297,11 +360,12 @@
         var size = files.reduce(function (a, b) { return a + (b.size || 0); }, 0);
         var sel = state.sel;
         var segs;
+        var drive = /^[AD]:\\$/i.test(state.path) ? mediaStatus(state.path.charAt(0).toUpperCase()) : null;
         if (sel.length) {
           segs = [{ text: 'Selected ' + sel.length + ' object(s) (' + Math.ceil(sel.reduce(function (a, b) { return a + (b.size || 0); }, 0) / 1024) + ' KB)', width: 300 },
           { text: 'My Computer' }];
         } else {
-          segs = [{ text: list.length + ' object(s) (' + Math.ceil(size / 1024) + ' KB)', width: 300 }, { text: addrLabel() }];
+          segs = [{ text: drive ? (list.length + ' object(s)   ' + Math.ceil(drive.used / 1024) + ' KB used, ' + Math.ceil(drive.free / 1024) + ' KB free') : (list.length + ' object(s) (' + Math.ceil(size / 1024) + ' KB)'), width: 300 }, { text: addrLabel() }];
         }
         win.setStatus(segs);
       }
@@ -398,9 +462,9 @@
           var dest = W98.fs.join(state.path, name);
           if (dest === p) return;
           var bytes = W98.fs.readBytes(p);
-          if (bytes) W98.fs.writeBytes(dest, bytes);
-          else W98.fs.mkdir(dest);
-          if (clip.op === 'cut') W98.fs.remove(p);
+          var result = bytes ? W98.fs.writeBytes(dest, bytes) : W98.fs.mkdir(dest);
+          if (mutationFailed(result, 'Copy', dest)) return;
+          if (clip.op === 'cut') mutationFailed(W98.fs.remove(p), 'Move', p);
         });
         clip.items = [];
         clip.op = null;
@@ -414,9 +478,9 @@
             if (!yes) return;
             state.sel.forEach(function (s) {
               var p = s.it.path;
-              if (!p || W98.fs.parent(p) === 'C:\\Recycled') { W98.fs.remove(p); return; }
+              if (!p || W98.fs.parent(p) === 'C:\\Recycled') { mutationFailed(W98.fs.remove(p), 'Delete', p); return; }
               var base = p.split('\\').pop();
-              W98.fs.rename(p, 'C:\\Recycled\\' + base);
+              if (mutationFailed(W98.fs.rename(p, 'C:\\Recycled\\' + base), 'Delete', p)) return;
               W98.reg.set('HKEY_CURRENT_USER\\Software\\W98\\Recycle', base, p);
             });
             W98.sound.play('Recycle');
@@ -429,7 +493,7 @@
         var it = state.sel[0].it;
         W98.dialog.prompt('Rename', 'New name:', it.name).then(function (n) {
           if (!n || n === it.name) return;
-          W98.fs.rename(it.path, W98.fs.join(state.path, n));
+          if (mutationFailed(W98.fs.rename(it.path, W98.fs.join(state.path, n)), 'Rename', it.path)) return;
           render();
         });
       }
@@ -437,26 +501,31 @@
         var it = state.sel[0];
         if (!it) return;
         var target = it.it.path;
-        W98.fs.writeText('C:\\WINDOWS\\Desktop\\' + it.it.name.replace(/\.[^.]+$/, '') + ' Shortcut.lnk', 'W98LNK1\npath:' + target);
+        if (mutationFailed(W98.fs.writeText('C:\\WINDOWS\\Desktop\\' + it.it.name.replace(/\.[^.]+$/, '') + ' Shortcut.lnk', 'W98LNK1\npath:' + target), 'Create Shortcut', 'C:\\WINDOWS\\Desktop')) return;
         W98.rebuildDesktopIcons();
         W98.dialog.alert('Shortcut', 'A shortcut to \'' + it.it.name + '\' has been placed on the desktop.', 'info');
       }
       function newFolder() {
         var base = 'New Folder', n = base, i = 2;
         while (W98.fs.exists(W98.fs.join(state.path, n))) n = base + ' (' + (i++) + ')';
-        W98.fs.mkdir(W98.fs.join(state.path, n));
+        if (mutationFailed(W98.fs.mkdir(W98.fs.join(state.path, n)), 'New Folder', state.path)) return;
         render();
       }
       function newText() {
         var n = 'New Text Document.txt', i = 2;
         while (W98.fs.exists(W98.fs.join(state.path, n))) n = 'New Text Document (' + (i++) + ').txt';
-        W98.fs.writeText(W98.fs.join(state.path, n), '');
+        if (mutationFailed(W98.fs.writeText(W98.fs.join(state.path, n), ''), 'New Text Document', state.path)) return;
         render();
       }
       function showProperties() {
         if (!state.sel.length) {
           var st = W98.stats();
-          var volume = state.special === 'computer'
+          var media = !state.special && /^[AD]:\\$/i.test(state.path) ? mediaStatus(state.path.charAt(0).toUpperCase()) : null;
+          var volume = media
+            ? 'Label:\t' + media.label + '\n' + 'Free Space:\t' + Math.round(media.free / 1024) + ' KB\n' +
+              'Total Size:\t' + Math.round(media.capacity / 1024) + ' KB\n' + 'Used Space:\t' + Math.round(media.used / 1024) + ' KB\n' +
+              'Write protected:\t' + (media.writeProtected ? 'Yes' : 'No') + '\n' + 'Manifest:\tversion ' + media.version + ' (' + (media.manifestId || 'virtual') + ')'
+            : state.special === 'computer'
             ? 'Free Space:\t' + Math.round((2 * 1024 * 1024 * 1024 - st.BYTES) / 1024) + ' KB\n' +
               'Total Size:\t2,097,152 KB\n' + 'Files:\t' + st.FILES
             : 'Location:\t' + state.path + '\nFiles:\t' + (W98.fs.list(state.path) || []).length;
@@ -480,12 +549,14 @@
       }
 
       win.on('resize', render);
+      var mediaRefresh = function () { if (!win.closed) render(); };
+      if (window.addEventListener) window.addEventListener('w98-media-change', mediaRefresh);
       win.on('key', function (e) {
         if (e.key === 'Enter') { openSel(); e.preventDefault(); }
         if (e.key === 'Backspace') { upOne(); e.preventDefault(); }
         if (e.key === 'Delete') { doDelete(); }
       });
-      win.on('close', function () { clip.items = []; });
+      win.on('close', function () { clip.items = []; if (window.removeEventListener) window.removeEventListener('w98-media-change', mediaRefresh); });
 
       state.history.push({ path: state.path, special: state.special });
       state.hi = 0;
