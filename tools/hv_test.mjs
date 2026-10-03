@@ -16,6 +16,9 @@ const dv = () => new DataView(H.memory.buffer);
 
 /* hypercall codes */
 const C_GET_HV_INFO = 0x0011, C_GET_REF_TIME = 0x0012, C_GET_VP_INDEX = 0x0013;
+const C_CREATE_PART = 0x0040, C_DEPOSIT_MEM = 0x0043, C_WITHDRAW_MEM = 0x0044, C_CREATE_VP = 0x0047;
+const C_MAP_GPA_PAGES = 0x0053;
+const C_SIGNAL_EVENT = 0x005D;
 const C_ENABLE_HC_PAGE = 0x0060, C_QUERY_MSR = 0x0070, C_SET_MSR = 0x0071;
 const C_CPUID = 0x0072;
 
@@ -26,6 +29,11 @@ const M_SIMP = 0x40000083, M_SINT0 = 0x40000090;
 
 /* status codes */
 const S_OK = 0, S_INVALID = 2, S_DENIED = 3, S_BADSTATE = 5, S_SLAT = 6, S_NOIMPL = 7;
+const S_REP = 0x10;
+/* fixed-width guest register ISA used by the VTL1/L2 interpreter */
+const ISA = { HALT:0x00, MOVI:0x01, ADD:0x02, SUB:0x03, XOR:0x04, LOAD:0x05,
+  STORE:0x06, JMP:0x07, JNZ:0x08, VMCALL:0x09, CPUID:0x0A, RDMSR:0x0B,
+  WRMSR:0x0C, VTL_CALL:0x0D, VTL_RETURN:0x0E, CMP:0x0F };
 /* partition states */
 const PS = { EMPTY: 0, CREATED: 1, INIT: 2, RUNNING: 3, PAUSED: 4, STOPPED: 5, FAULTED: 6, DELETED: 7 };
 /* guest boot flags */
@@ -33,6 +41,7 @@ const BF = { CPUID: 1, OSID: 2, HYPERCALL: 4, REFTIME: 8, VPINDEX: 16, SYNIC: 32
 const ALL_BOOT = 0x1FF;
 
 let pass = 0, fail = 0;
+const U = (x) => x >>> 0;
 function ok(cond, what, extra) {
   if (cond) pass++;
   else { fail++; console.log('  FAIL: ' + what + (extra !== undefined ? '  -> ' + JSON.stringify(extra) : '')); }
@@ -70,6 +79,7 @@ function pfnFor(part, gpa) {
     if (H.hv_page_field(p, 0) === part && H.hv_page_field(p, 1) === gpa) return p;
   return 0;
 }
+function guestPfn(part, gpa) { return H.hv_debug_guest_window_pfn(part) + (gpa >>> 12); }
 function setFrame(part, code, inGpa, outGpa, a0, a1, a2, a3) {
   const d = new DataView(new ArrayBuffer(32));
   [code, 0, inGpa, outGpa, a0 | 0, a1 | 0, a2 | 0, a3 | 0].forEach((v, i) => d.setUint32(i * 4, v >>> 0, true));
@@ -79,9 +89,13 @@ function setFrame(part, code, inGpa, outGpa, a0, a1, a2, a3) {
 function frameStatus(part) { H.hv_read_gpa(part, 0xE004, scratch(), 4); return u32s(scratch(), 1)[0]; }
 function msrSet(vp, msr, lo, hi) { return H.hv_set_msr(vp, msr, lo >>> 0, (hi || 0) >>> 0); }
 function msrGet(vp, msr) { H.hv_query_msr(vp, msr, scratch()); return u32s(scratch(), 2); }
-function cpuid(leaf, sub) { H.hv_cpuid(0, leaf, sub, scratch()); return u32s(scratch(), 4); }
+function cpuidPart(part, leaf, sub) { H.hv_cpuid(part, leaf, sub, scratch()); return u32s(scratch(), 4); }
+function cpuid(leaf, sub) { return cpuidPart(0, leaf, sub); }
 function chanOf(part) {
-  for (let c = 1; c <= 16; c++) if (H.hv_vmbus_channel_field(c, 0) === part) return c;
+  for (let slot = 0; slot < 16; slot++) {
+    const c = H.hv_vmbus_channel_id_at(slot);
+    if (c && H.hv_vmbus_channel_field(c, 0) === part) return c;
+  }
   return 0;
 }
 function drainAll(ch, max) {
@@ -92,6 +106,16 @@ function drainAll(ch, max) {
     out.push({ type: u32s(scratch(), 1)[0], text: readStr(scratch() + 8, n) });
   }
   return out;
+}
+function isaInstr(op, rd = 0, ra = 0, rb = 0, imm = 0) {
+  const b = new Uint8Array(8), d = new DataView(b.buffer);
+  b[0] = op; b[1] = rd; b[2] = ra; b[3] = rb; d.setUint32(4, imm >>> 0, true); return b;
+}
+function writeIsa(partId, gpa, insns) {
+  const bytes = new Uint8Array(insns.length * 8);
+  insns.forEach((ins, i) => bytes.set(ins, i * 8));
+  u8().set(bytes, scratch());
+  return H.hv_isa_load(partId, gpa, scratch(), bytes.length);
 }
 
 console.log('\n=== hypervisor.wasm acceptance test (HV_ABI.md 5.2) ===\n');
@@ -113,6 +137,9 @@ ok(H.hv_debug_frame_words() === 8, 'hypercall frame is 32 bytes', H.hv_debug_fra
 ok(H.hv_debug_msg_size() === 256, 'SynIC message is 256 bytes', H.hv_debug_msg_size());
 ok(H.hv_debug_fb_bytes() === 400 * 120 * 4, 'framebuffer is 400x120x32bpp', H.hv_debug_fb_bytes());
 ok(H.hv_debug_gpa_limit() === 0xB0000, 'guest GPA window is 176 pages', H.hv_debug_gpa_limit());
+const cpuid1 = cpuid(1, 0);
+ok((cpuid1[2] & 0x80000000) !== 0 && (cpuid1[2] & 0x20) !== 0,
+   'CPUID.1 advertises hypervisor presence and VMX capability', cpuid1);
 
 /* ---- 2. the root partition ---------------------------------------------- */
 ok(H.hv_partition_count() === 1, 'hv_init created the root partition', H.hv_partition_count());
@@ -142,7 +169,7 @@ ok(vf(vpA, 2) === 1, 'vp created state', vf(vpA, 2));
 ok(H.hv_vp_count() === 3, 'vp count is 3', H.hv_vp_count());
 ok(H.hv_vp_set_register(vpA, 0, 0xDEADBEEF) === 0, 'set a VP register');
 ok((H.hv_vp_register(vpA, 0) >>> 0) === 0xDEADBEEF, 'read the VP register back', (H.hv_vp_register(vpA, 0) >>> 0).toString(16));
-ok(H.hv_vp_set_register(vpA, 9, 1) === S_INVALID, 'out-of-range register refused');
+ok(H.hv_vp_set_register(vpA, 32, 1) === S_INVALID, 'out-of-range register refused');
 
 /* ---- 4. init + start + boot both guests --------------------------------- */
 ok(H.hv_partition_init(A) === 0, 'initialize partition A');
@@ -169,12 +196,15 @@ ok((flagsA & BF.FB) !== 0, 'guest drew its framebuffer', flagsA);
 ok(flagsA === ALL_BOOT, 'all nine boot steps completed', flagsA);
 ok(H.hv_guest_field(A, 0) === 10, 'guest reached the run stage', H.hv_guest_field(A, 0));
 ok(H.hv_guest_field(A, 13) === 0, 'guest reported no boot error', H.hv_guest_field(A, 13));
+ok(H.hv_guest_field(A, 15) !== 0 || H.hv_guest_field(A, 16) !== 0,
+   'guest retained the computed reference TSC value');
 ok(H.hv_debug_guest_osid(A) === 0x00319831, 'HV_X64_MSR_GUEST_OS_ID is 0x00319831', H.hv_debug_guest_osid(A).toString(16));
 const glogA = guestLog(A);
 ok(glogA.includes('Microsoft Hv'), 'guest log names the vendor', glogA.split('\n')[1]);
 ok(glogA.includes('HV_X64_MSR_GUEST_OS_ID'), 'guest log shows the OS id write');
 ok(glogA.includes('hypercall page enabled'), 'guest log shows the hypercall page');
 ok(glogA.includes('reference time'), 'guest log shows the reference time');
+ok(glogA.includes('reference TSC page'), 'guest reads and computes from the reference TSC page');
 ok(glogA.includes('virtual processor index'), 'guest log shows the VP index');
 ok(glogA.includes('SynIC up'), 'guest log shows SynIC setup');
 ok(glogA.includes('synthetic timer armed'), 'guest log shows the timer');
@@ -223,6 +253,14 @@ ok(H.hv_guest_field(B, 1) === ALL_BOOT, 'second guest completed all boot steps',
   ok(H.hv_gpa_state(A, 0x40000) === 2, 'A page now read-only', H.hv_gpa_state(A, 0x40000));
   ok(H.hv_map_gpa(A, 0x40000, 1, 3) === 0, 'restore A page rw');
   ok(H.hv_gpa_state(A, 0x40000) === 3, 'A page rw again');
+  ok(H.hv_map_gpa(A, 0x40000, 1, 4) === 0, 'map an execute-only page');
+  ok(H.hv_gpa_state(A, 0x40000) === 1, 'execute-only mapping keeps the legacy state as mapped');
+  ok(H.hv_probe_execute_gpa(A, 0x40000) === S_OK, 'execute permission succeeds on an X page');
+  ok(H.hv_map_gpa(A, 0x40000, 1, 6) === 0, 'map read+execute without write');
+  ok(H.hv_gpa_state(A, 0x40000) === 2, 'read+execute mapping is legacy read-only');
+  ok(H.hv_probe_execute_gpa(A, 0x40000) === S_OK, 'execute permission succeeds on an R+X page');
+  ok(H.hv_map_gpa(A, 0x40000, 1, 3) === 0, 'restore A page rw');
+  ok(H.hv_map_gpa(A, 0x40000, 1, 8) === S_INVALID, 'unknown SLAT permission bits are refused');
   ok(H.hv_gpa_state(A, 0xB0000) === 0, 'a GPA outside the window is unmapped', H.hv_gpa_state(A, 0xB0000));
   ok(H.hv_map_gpa(A, 0xA0000, 64, 3) === S_INVALID, 'map past the GPA window is refused', H.hv_map_gpa(A, 0xA0000, 64, 3));
   ok(H.hv_read_gpa(A, 0xB0000, scratch(), 16) === 0, 'read outside the window transfers nothing');
@@ -251,14 +289,51 @@ ok(H.hv_memory_stats(4) > 0, 'deposit counter', H.hv_memory_stats(4));
   ok(vendor === 'Microsoft Hv', 'cpuid 0x40000000 vendor', vendor);
   ok(cpuid(0x40000001, 0)[0] === 0x31237648, 'cpuid 0x40000001 signature "Hv#1"');
   ok(cpuid(0x40000002, 0)[0] === 0x00060000, 'cpuid 0x40000002 version');
-  ok(cpuid(0x40000003, 0)[0] === 1, 'cpuid 0x40000003 privilege mask');
+  const rootPriv = cpuid(0x40000003, 0);
+  ok(rootPriv[0] === 0x00002FFF, 'cpuid 0x40000003 root low privilege mask', rootPriv[0].toString(16));
+  ok(rootPriv[1] === 0x003319F7, 'cpuid 0x40000003 root high privilege mask', rootPriv[1].toString(16));
   const v1 = cpuid(1, 0);
   ok((v1[2] & 0x80000000) !== 0, 'cpuid 1 ECX[31] hypervisor-present bit', v1[2].toString(16));
   ok(cpuid(0x40000005, 0)[0] === 16, 'cpuid 0x40000005 implementation limits (max vps)');
   ok(cpuid(0x40000006, 0)[0] !== 0, 'cpuid 0x40000006 hardware features');
 }
 
-/* ---- 9. virtual MSRs --------------------------------------------------- */
+/* ---- 9. partition privilege enforcement ------------------------------- */
+{
+  const childPriv = cpuidPart(A, 0x40000003, 0);
+  ok(childPriv[0] === 0x0000027F, 'child CPUID low privilege mask', childPriv[0].toString(16));
+  ok(childPriv[1] === 0x00000030, 'child CPUID high privilege mask', childPriv[1].toString(16));
+  ok(pf(A, 16) === childPriv[0] && pf(A, 17) === childPriv[1], 'partition fields expose the same privilege mask');
+  ok((childPriv[1] & 1) === 0, 'child lacks CreatePartitions privilege');
+  ok((childPriv[1] & 4) === 0, 'child lacks AccessMemoryPool privilege');
+  ok((childPriv[1] & (1 << 21)) === 0, 'child lacks StartVirtualProcessor privilege');
+
+  const vpCount = H.hv_vp_count();
+  const partCount = H.hv_partition_count();
+  setFrame(A, C_CREATE_PART, 0, 0, 0, 0, 0, 0);
+  ok(H.hv_vmcall(vpA) === S_DENIED, 'child CreatePartition is denied');
+  ok(frameStatus(A) === S_DENIED, 'CreatePartition denial is written to the frame');
+  ok(H.hv_partition_count() === partCount, 'denied CreatePartition has no side effect');
+
+  const deposits = H.hv_memory_stats(4);
+  setFrame(A, C_DEPOSIT_MEM, 0, 0, 0xA0000, 1, 0, 0);
+  ok(H.hv_vmcall(vpA) === S_DENIED, 'child DepositMemory is denied');
+  ok(frameStatus(A) === S_DENIED, 'DepositMemory denial is written to the frame');
+  ok(H.hv_memory_stats(4) === deposits, 'denied DepositMemory does not consume a page');
+
+  const mapState = H.hv_gpa_state(A, 0x40000);
+  setFrame(A, C_MAP_GPA_PAGES, 0, 0, 0x40000, 1, 3, 0);
+  ok(H.hv_vmcall(vpA) === S_DENIED, 'child MapGpaPages is denied');
+  ok(frameStatus(A) === S_DENIED, 'MapGpaPages denial is written to the frame');
+  ok(H.hv_gpa_state(A, 0x40000) === mapState, 'denied MapGpaPages leaves the mapping unchanged');
+
+  setFrame(A, C_CREATE_VP, 0, 0, 1, 0, 0, 0);
+  ok(H.hv_vmcall(vpA) === S_DENIED, 'child CreateVp is denied');
+  ok(frameStatus(A) === S_DENIED, 'CreateVp denial is written to the frame');
+  ok(H.hv_vp_count() === vpCount, 'denied CreateVp has no side effect');
+}
+
+/* ---- 10. virtual MSRs --------------------------------------------------- */
 {
   ok(msrSet(vpA, M_GUEST_OS_ID, 0xCAFEBABE, 0) === S_OK, 'MSR write accepted');
   ok(msrGet(vpA, M_GUEST_OS_ID)[0] === 0xCAFEBABE, 'MSR read back', msrGet(vpA, M_GUEST_OS_ID)[0].toString(16));
@@ -375,6 +450,11 @@ ok(H.hv_memory_stats(4) > 0, 'deposit counter', H.hv_memory_stats(4));
   pump(2, 200);
   ok(guestLog(A).includes('synic: drained message type 7'), 'the guest drained the message itself',
      guestLog(A).split('\n').filter(l => l.includes('synic')).slice(-1)[0]);
+  ok(H.hv_message_push(vpA, scratch(), 256) === 1 && H.hv_message_push(vpA, scratch(), 256) === 1 &&
+     H.hv_synic_field(vpA, 10) === 1 && H.hv_message_pop(vpA, scratch(), 256) === 256 &&
+     H.hv_synic_eom(vpA) === S_OK && H.hv_synic_field(vpA, 10) === 1 && H.hv_synic_field(vpA, 8) > 0,
+     'EOM redelivers a pending SINT while another message remains queued');
+  H.hv_message_pop(vpA, scratch(), 256); H.hv_synic_eom(vpA);
 }
 
 /* ---- 13. VMBus: offer, accept, data, injected commands ----------------- */
@@ -502,6 +582,7 @@ const chA = chanOf(A);
   ok(logText().includes('GUEST ISOLATION VIOLATION'), 'the hypervisor logged the isolation violation');
   pump(3, 200);
   ok(H.hv_guest_heartbeat(C) === hb, 'a faulted partition no longer runs', [hb, H.hv_guest_heartbeat(C)]);
+  ok(H.hv_g_load(C, 0xB0000, scratch(), 4) === 0, 'a guest read outside the SLAT window is refused');
   ok(H.hv_debug_guest_oob_write(C, 0xB0000) === 0, 'a guest store outside the window is refused by the SLAT');
   H.hv_partition_delete(C);
   ok(pf(C, 1) === PS.EMPTY, 'canary partition deleted');
@@ -517,6 +598,7 @@ const chA = chanOf(A);
   ok(H.hv_guest_field(G, 1) === ALL_BOOT, 'read-only test guest booted');
   ok(H.hv_map_gpa(G, 0x40000, 1, 2) === 0, 'make one guest page read-only');
   ok(H.hv_gpa_state(G, 0x40000) === 2, 'page is read-only', H.hv_gpa_state(G, 0x40000));
+  ok(H.hv_probe_execute_gpa(G, 0x40000) === S_SLAT, 'execute from a non-executable page faults');
   ok(H.hv_debug_guest_oob_write(G, 0x40000) === 0, 'a guest store to a read-only page is refused');
   ok(pf(G, 1) === PS.FAULTED, 'the guest that stored to a read-only page faults', pf(G, 1));
   ok(logText().includes('read-only'), 'the hypervisor logged the read-only violation');
@@ -541,6 +623,7 @@ const chA = chanOf(A);
   ok(pf(E, 1) === PS.STOPPED, 'a stopped partition stays stopped');
   ok(H.hv_guest_heartbeat(E) > 0, 'the halted guest kept its heartbeat history');
   H.hv_partition_delete(E);
+  ok(H.hv_vmbus_channel_field(chE, 0) === 0, 'a deleted channel id is stale and cannot be resolved');
 }
 
 /* ---- 20. lifecycle: stop, reset, delete -------------------------------- */
@@ -569,7 +652,408 @@ const chA = chanOf(A);
   ok(H.hv_partition_count() === 3, 'partition count back to root+A+B', H.hv_partition_count());
 }
 
-/* ---- 21. hypervisor log ------------------------------------------------- */
+/* ---- 21. root privilege enforcement is live ---------------------------- */
+{
+  ok(H.hv_map_gpa(1, 0xE000, 1, 3) === S_OK, 'map the root hypercall page');
+  const beforeParts = H.hv_partition_count();
+  setFrame(1, C_CREATE_PART, 0, 0, 0, 0, 0, 0);
+  ok(H.hv_vmcall(rootVp) === S_OK, 'root CreatePartition is allowed');
+  ok(H.hv_partition_count() === beforeParts + 1, 'root CreatePartition created a child');
+  let rootChild = 0;
+  for (let slot = 0; slot < 8; slot++) {
+    const id = H.hv_partition_id_at(slot);
+    if (id && id !== A && id !== B && pf(id, 1) === PS.CREATED) rootChild = id;
+  }
+  ok(rootChild > 1, 'root-created child is addressable', rootChild);
+  if (rootChild) ok(H.hv_partition_delete(rootChild) === S_OK, 'clean up root-created child');
+  const replacement = part('Generation Guest');
+  ok(replacement !== rootChild, 'reusing a deleted partition slot changes its id', [rootChild, replacement]);
+  ok(pf(rootChild, 1) === 0, 'the stale partition id cannot resolve after reuse');
+  ok(pf(replacement, 1) === PS.CREATED, 'the replacement partition is live');
+  ok(H.hv_partition_delete(replacement) === S_OK, 'clean up the replacement partition');
+
+  setFrame(1, C_DEPOSIT_MEM, 0, 0, 0xC000, 1, 0, 0);
+  ok(H.hv_vmcall(rootVp) === S_OK, 'root DepositMemory is allowed');
+  setFrame(1, C_MAP_GPA_PAGES, 0, 0, 0xC000, 1, 3, 0);
+  ok(H.hv_vmcall(rootVp) === S_OK, 'root MapGpaPages is allowed');
+  ok(H.hv_gpa_state(1, 0xC000) === 3, 'root mapping became read/write');
+
+  const beforeVps = H.hv_vp_count();
+  setFrame(1, C_CREATE_VP, 0, 0, 1, 0, 0, 0);
+  ok(H.hv_vmcall(rootVp) === S_OK, 'root CreateVp is allowed');
+  ok(H.hv_vp_count() === beforeVps + 1, 'root CreateVp created a VP');
+}
+
+/* ---- 23. TLFS controls, dirty tracking, SynIC, timers and state -------- */
+{
+  ok(H.hv_partition_get_property(A, 0) === H.hv_partition_field(A, 16),
+     'partition privilege properties are readable');
+  ok(H.hv_partition_set_property(A, 0, 0xFFFFFFFF) === S_DENIED,
+     'a child cannot raise its privilege mask');
+  ok(H.hv_partition_set_weight(A, 3) === S_OK && H.hv_partition_field(A, 18) === 3,
+     'partition CPU weight is configurable');
+  setFrame(1, C_DEPOSIT_MEM, 0, 0, 0xD000, 1, 0, 0);
+  ok(H.hv_vmcall(rootVp) === S_OK, 'root can deposit an un-mapped page for withdrawal');
+  const withdrawPfn = pfnFor(1, 0xD000);
+  ok(withdrawPfn > 0 && H.hv_withdraw_memory(1, withdrawPfn) === S_OK &&
+     H.hv_page_field(withdrawPfn, 0) === 0,
+     'withdraw memory returns an un-mapped deposited page to the pool', withdrawPfn);
+  H.hv_partition_set_weight(B, 1);
+  const aInstr0 = vf(vpA, 6), bInstr0 = vf(vpB, 6);
+  pump(8, 1);
+  const aInstrDelta = vf(vpA, 6) - aInstr0, bInstrDelta = vf(vpB, 6) - bInstr0;
+  ok(aInstrDelta > bInstrDelta && bInstrDelta > 0,
+     'weighted round-robin gives a heavier partition a larger slice share', [aInstrDelta, bInstrDelta]);
+  const rep = H.hv_hypercall_control(vpA, C_SIGNAL_EVENT, 10, 0, 0, 1, 0, 0, 0);
+  ok(rep === S_REP && H.hv_rep_field(vpA, 0) === 4 && H.hv_rep_field(vpA, 1) === 10,
+     'a control-word rep hypercall returns partial progress');
+  let rep2 = S_REP;
+  while (rep2 === S_REP) rep2 = H.hv_hypercall_control(vpA, C_SIGNAL_EVENT, (H.hv_rep_field(vpA, 0) << 16) | 10, 0, 0, 1, 0, 0, 0);
+  ok(rep2 === S_OK && H.hv_rep_field(vpA, 0) === 10 && H.hv_rep_field(vpA, 2) === 0,
+     'the rep hypercall resumes and completes');
+  const dirtyText = pushStr('dirty');
+  H.hv_write_gpa(A, 0x40000, dirtyText.p, dirtyText.n);
+  ok(H.hv_gpa_access_state(A, 0x40000, 1, scratch()) === 1 && u8()[scratch()] === 1,
+     'a guest write sets and queries a dirty GPA bit');
+  ok(H.hv_gpa_access_state(A, 0x40000, 1, scratch()) === 0 && u8()[scratch()] === 0,
+     'querying dirty state clears it');
+  const msg15 = scratch() + 256;
+  new DataView(H.memory.buffer).setUint32(msg15, 15, true);
+  ok(H.hv_set_msr(vpA, M_SINT0 + 15, 0x2002F, 0) === S_OK &&
+     H.hv_message_push(vpA, msg15, 256) === 1 && H.hv_sint_field(vpA, 15, 2) > 0 &&
+     H.hv_sint_field(vpA, 15, 3) === 1,
+     'the complete sixteen-SINT SynIC accepts SINT15 and auto-EOI');
+  ok(H.hv_synic_eom(vpA) === S_OK && H.hv_synic_field(vpA, 8) === 0,
+     'EOM clears pending SynIC delivery');
+  const msg14 = scratch() + 512;
+  new DataView(H.memory.buffer).setUint32(msg14, 14, true);
+  const dropped14 = H.hv_sint_field(vpA, 14, 4);
+  const counted14 = H.hv_sint_field(vpA, 14, 2);
+  ok(H.hv_set_msr(vpA, M_SINT0 + 14, 0x1002E, 0) === S_OK &&
+     H.hv_message_push(vpA, msg14, 256) === 1 && H.hv_sint_field(vpA, 14, 4) === dropped14 + 1 &&
+     H.hv_sint_field(vpA, 14, 2) === counted14,
+     'a masked SINT records a drop without claiming delivery');
+  while (H.hv_message_pop(vpA, scratch(), 256)) {}
+  H.hv_synic_eom(vpA);
+  const vpA2 = H.hv_vp_create(A, 1);
+  ok(vpA2 > 0 && H.hv_send_ipi(vpA, vpA2, 0x45) === S_OK &&
+     H.hv_apic_field(vpA2, 2) === 1 && H.hv_apic_field(vpA2, 3) === 0x45,
+     'an IPI reaches another VP in the partition');
+  ok(H.hv_apic_eoi(vpA2) === S_OK && H.hv_apic_field(vpA2, 2) === 0,
+     'APIC EOI consumes the posted IPI');
+  ok(H.hv_vp_set_register(vpA, 31, 0xCAFE) === S_OK && H.hv_vp_register(vpA, 31) === 0xCAFE,
+     'the full VP register name range round trips');
+  ok(H.hv_timer_set_n(vpA, 0, 15, 25, 0) === S_OK && H.hv_timer_set_n(vpA, 1, 14, 40, 1) === S_OK,
+     'four independent synthetic timer slots can be armed');
+  pump(3, 100);
+  ok(H.hv_timer_n_field(vpA, 0, 1) > 0 && H.hv_timer_n_field(vpA, 1, 1) === 1 &&
+     H.hv_timer_n_field(vpA, 1, 0) === 0,
+     'periodic timers coalesce while one-shot timers disarm',
+     [H.hv_timer_n_field(vpA, 0, 1), H.hv_timer_n_field(vpA, 1, 1), H.hv_timer_n_field(vpA, 1, 0)]);
+  ok(H.hv_set_msr(vpA, M_SINT0 + 13, 0x4D, 0) === S_OK &&
+     H.hv_timer_set_n(vpA, 2, 13, 10, 1) === S_OK &&
+     H.hv_timer_n_set_direct(vpA, 2, 1) === S_OK && H.hv_timer_n_field(vpA, 2, 6) === 1,
+     'a synthetic timer can use direct interrupt delivery');
+  pump(1, 20);
+  ok(H.hv_apic_field(vpA, 2) === 0 && H.hv_apic_field(vpA, 4) === H.hv_sint_field(vpA, 13, 0),
+     'direct synthetic timer delivers its vector at the next VP entry');
+  H.hv_apic_eoi(vpA);
+  ok(H.hv_signal_event(A, 0, 3) === S_OK && H.hv_synic_event_field(vpA, 3) === 1 &&
+     H.hv_synic_field(vpA, 9) > 0 && H.hv_synic_event_clear(vpA, 3) === S_OK &&
+     H.hv_synic_event_field(vpA, 3) === 0,
+     'SynIC signal events set and clear event flags');
+  ok(H.hv_reference_tsc_set(vpA, 7, 2, 5, 0) === S_OK && H.hv_reference_tsc_read(vpA, scratch()) === S_OK &&
+     u32s(scratch(), 3)[0] === 7 && u32s(scratch(), 3)[1] === (H.hv_ref_time_ms() * 20000 + 5),
+     'the reference TSC page derives scaled reference time');
+  const chA = chanOf(A);
+  ok(H.hv_vmbus_negotiate(chA, 2) === S_OK && H.hv_vmbus_channel_field(chA, 11) === 2,
+     'VMBus version negotiation is tracked');
+  ok(H.hv_vmbus_gpadl(chA, 0x40000, 1) === S_OK && H.hv_vmbus_channel_field(chA, 13) === 1,
+     'VMBus GPADL establishment records its page range');
+  const cpPtr = scratch() + 4096;
+  const cpLen = H.hv_checkpoint_save(A, cpPtr, 256);
+  const hashBefore = H.hv_partition_state_hash(A);
+  const savedHeartbeat = H.hv_guest_heartbeat(A);
+  H.hv_g_load(A, 0x10000, scratch(), 4);
+  const savedPixel = u32s(scratch(), 1)[0];
+  ok(cpLen === 64 && U(hashBefore) > 0 && H.hv_checkpoint_field(A, 0) === 1 &&
+     H.hv_checkpoint_field(A, 1) === 400 * 120 * 4 && H.hv_checkpoint_field(A, 2) === savedHeartbeat,
+     'a partition checkpoint is versioned, hashed, and captures framebuffer/progress', [cpLen, hashBefore]);
+  dv().setUint32(scratch(), savedPixel ^ 0x00FFFFFF, true);
+  ok(H.hv_g_store(A, 0x10000, scratch(), 4) === 4 && H.hv_checkpoint_restore(A, cpPtr, cpLen) === S_OK &&
+     H.hv_partition_state_hash(A) === hashBefore,
+     'restoring a checkpoint preserves the state hash');
+  H.hv_g_load(A, 0x10000, scratch(), 4);
+  ok(u32s(scratch(), 1)[0] === savedPixel && H.hv_guest_heartbeat(A) === savedHeartbeat,
+     'checkpoint restore replays the framebuffer and guest heartbeat');
+  const M = part('Migration Target');
+  let copied = 0;
+  ok(H.hv_partition_init(M) === S_OK && H.hv_migrate_precopy(A, M, 4) >= 1,
+     'dirty pages pre-copy into a destination partition');
+  for (let pass = 0; pass < 64; pass++) {
+    const n = H.hv_migrate_precopy(A, M, 8);
+    copied += n;
+    if (!n) break;
+  }
+  H.hv_g_load(M, 0x10000, scratch(), 4);
+  ok(copied >= 47 && u32s(scratch(), 1)[0] === savedPixel,
+     'repeated dirty-page pre-copy converges with an identical framebuffer', copied);
+  ok(H.hv_vmbus_close(chA) === S_OK && H.hv_vmbus_reopen(chA) === S_OK &&
+     H.hv_vmbus_negotiate(chA, 2) === S_OK && H.hv_vmbus_gpadl(chA, 0x40000, 1) === S_OK,
+     'a closed VMBus channel can renegotiate and establish its GPADL again');
+  ok(H.hv_vmbus_rescind(chA) === S_OK && H.hv_vmbus_channel_field(chA, 16) === 1,
+     'VMBus rescind is visible to the guest');
+  H.hv_partition_delete(M);
+}
+
+/* ---- 25. VTL/VBS policy and secure services ---------------------------- */
+{
+  ok(H.hv_enable_partition_vtl(A, 1) === S_OK && H.hv_enable_vp_vtl(vpA, 1) === S_OK,
+     'VTL1 can be enabled for a partition and VP');
+  ok(H.hv_vtl_synic_config(vpA, 1, 3, 0xF1, 0) === S_DENIED &&
+     H.hv_vtl_call(vpA, 1, 0) === S_OK &&
+     H.hv_vtl_synic_config(vpA, 1, 3, 0xF1, 0) === S_OK &&
+     H.hv_vtl_synic_field(vpA, 1, 3, 0) === 0xF1 &&
+     H.hv_vtl_synic_field(vpA, 1, 3, 1) === 0 &&
+     H.hv_vtl_return(vpA) === S_OK && H.hv_vtl_synic_field(vpA, 1, 3, 0) === 0,
+     'each VTL owns a SynIC bank and lower VTLs cannot read it');
+  ok(H.hv_vtl_call(vpA, 1, 0) === S_OK && H.hv_vtl_field(A, 1) === 1 &&
+     H.hv_vtl_return(vpA) === S_OK && H.hv_vtl_field(A, 1) === 0,
+     'VTL call and return save and restore the active context');
+  ok(H.hv_vtl_set_register(vpA, 1, 0, 0x1111) === S_DENIED &&
+     H.hv_vtl_call(vpA, 2, 0) === S_OK && H.hv_vtl_set_register(vpA, 1, 0, 0x7A11) === S_OK &&
+     H.hv_vtl_get_register(vpA, 1, 0, scratch()) === S_OK && u32s(scratch(), 1)[0] === 0x7A11 &&
+     H.hv_vtl_get_register(vpA, 0, 0, scratch()) === S_DENIED && H.hv_vtl_return(vpA) === S_OK,
+     'VTL1 register writes are inaccessible from VTL0');
+  ok(H.hv_modify_vtl_protection_mask(A, 0x40000, 1, 2) === S_OK &&
+     H.hv_vtl_access(A, 0, 0x40000, 1) === S_DENIED && H.hv_vtl_field(A, 4) > 0 &&
+     H.hv_vtl_return(vpA) === S_OK,
+     'a VTL0 write-up violation intercepts into VTL1');
+  ok(H.hv_modify_vtl_protection_mask(A, 0x40000, 1, 0) === S_OK &&
+     H.hv_vtl_access(A, 0, 0x40000, 2) === S_DENIED && H.hv_vtl_field(A, 4) > 0 &&
+     H.hv_vtl_return(vpA) === S_OK,
+     'a VTL0 read of a VTL1-only page is intercepted instead of exposing bytes');
+  const codeHash = H.hv_page_hash(A, 0x40000);
+  ok(H.hv_hvci_sign_page(A, 0x40000, codeHash ^ 1) === S_DENIED &&
+     H.hv_hvci_sign_page(A, 0x40000, codeHash) === S_OK &&
+     H.hv_hvci_set_execute(A, 0x40000) === S_OK,
+     'HVCI refuses an unsigned page and admits a signed executable page');
+  ok(H.hv_vtl_access(A, 0, 0x40000, 1) === S_DENIED &&
+     H.hv_vtl_return(vpA) === S_OK && H.hv_vtl_access(A, 0, 0x40000, 4) === S_OK,
+     'HVCI enforces W^X after signing');
+  ok(H.hv_kdp_protect(A, 0x41000, 1) === S_OK && H.hv_vtl_access(A, 0, 0x41000, 1) === S_DENIED &&
+     H.hv_vtl_return(vpA) === S_OK,
+     'KDP makes a page read-only even to VTL0');
+  const vsmHash = H.hv_page_hash(A, 0x40000);
+  ok(H.hv_vsm_set_code(A, 0x40000, vsmHash ^ 1) === S_DENIED &&
+     H.hv_vsm_set_code(A, 0x40000, vsmHash) === S_OK &&
+     H.hv_vsm_field(A, 0) === 0x40000 && H.hv_vsm_field(A, 2) === 1,
+     'the VSM code page is admitted only after its page hash matches');
+  ok(H.hv_vtl_inject_interrupt(vpA, 1, 0xF2) === S_OK &&
+     H.hv_vtl_interrupt_field(vpA, 1, 0) === 1 &&
+     H.hv_vm_entry(vpA) === 1 && H.hv_vtl_interrupt_field(vpA, 1, 2) === 0xF2 &&
+     H.hv_vtl_return(vpA) === S_OK,
+     'a higher-VTL interrupt preempts VTL0 and is delivered at the next entry');
+  const secret = pushStr('VTL1-credential-secret');
+  ok(H.hv_lsa_store_secret(A, secret.p, secret.n) === S_OK && H.hv_vtl_field(A, 9) === secret.n,
+     'Credential Guard stores a secret in VTL1 state');
+  ok(H.hv_lsa_call(A, 0, 0, 0, scratch()) === S_OK && H.hv_vtl_scan(A, secret.p, secret.n) === 0,
+     'VTL0 receives only an LSA-derived result and cannot scan out the secret');
+  const measuredPcr = H.hv_measure_boot(A, 1, 0x1234);
+  ok(measuredPcr !== 0 && H.hv_pcr_field(A) !== H.hv_measure_boot(A, 2, 0x1234),
+     'measured boot extends a changing PCR');
+  ok(H.hv_lsa_unseal(A, 1, measuredPcr ^ 1, scratch()) === S_DENIED &&
+     H.hv_lsa_unseal(A, 2, H.hv_pcr_field(A), scratch()) === S_OK,
+     'LSA unseal refuses a stale PCR and accepts the measured boot state');
+  ok(H.hv_hyperguard_write(A, 0, 0) === S_DENIED && H.hv_vtl_field(A, 11) > 0,
+     'HyperGuard refuses dangerous VTL0 control writes');
+  const guestSource = readFileSync(join(root, 'guest/guest.c'), 'utf8');
+  const guestExterns = [...guestSource.matchAll(/\bextern\s+\w+\s+(hv_\w+)\s*\(/g)].map(m => m[1]);
+  const guestApi = new Set(['hv_g_load', 'hv_g_store', 'hv_vmcall', 'hv_message_pop',
+    'hv_timer_set', 'hv_guest_timer_take', 'hv_guest_log', 'hv_debug_partition_index']);
+  ok(guestExterns.length > 0 && guestExterns.every(name => guestApi.has(name)),
+     'guest source only names the documented checked hypervisor entry points', guestExterns);
+  ok(!/\b(?:PARTS|VPS|PAGES|PHYS|VMX_FIELDS|CHANS)\b/.test(guestSource),
+     'guest source has no direct host-state symbol access');
+}
+
+/* ---- 24. synthetic device integration services ------------------------ */
+{
+  const D = part('Device Guest');
+  H.hv_vp_create(D, 0); H.hv_partition_init(D); H.hv_partition_start(D); pump(4, 100);
+  ok(H.hv_device_field(D, 0, 0) === 1 && H.hv_device_field(D, 1, 0) === 1,
+     'keyboard and video synthetic devices are online');
+  const key = pushStr('key-A');
+  ok(H.hv_device_send(D, 0, key.p, key.n) === S_OK && H.hv_device_field(D, 0, 1) === 1,
+     'synthetic keyboard traffic crosses VMBus');
+  ok(H.hv_device_send(D, 2, key.p, key.n) === S_OK && H.hv_device_field(D, 2, 2) === 1,
+     'synthetic block-device requests complete');
+  ok(H.hv_device_send(D, 3, key.p, key.n) === S_OK && H.hv_device_field(D, 3, 2) === 1,
+     'synthetic loopback network traffic completes');
+  ok(H.hv_device_send(D, 5, key.p, key.n) === S_OK && pf(D, 1) === PS.STOPPED &&
+     H.hv_device_field(D, 5, 0) === 0,
+     'the shutdown integration service stops the guest cleanly');
+  ok(H.hv_device_send(D, 0, key.p, key.n) === S_BADSTATE,
+     'device traffic after shutdown is refused');
+  H.hv_partition_delete(D);
+}
+
+/* ---- 26. VMX/VMCS/EPT model ------------------------------------------- */
+{
+  ok(H.hv_vmx_on(vpA) === S_DENIED, 'VMXON without feature-control enable is refused');
+  ok(H.hv_vmx_basic() === 1 && H.hv_vmx_set_feature_control(5) === S_OK && H.hv_vmx_feature_control() === 5 &&
+     H.hv_vmx_on(vpA) === S_OK, 'feature-control lock and VMXON enable the model');
+  ok(H.hv_vmx_set_feature_control(1) === -2, 'locked feature-control MSR cannot be changed');
+  ok(H.hv_vmclear(vpA, 0x1000) === S_OK && H.hv_vmptrld(vpA, 0x1000) === S_OK &&
+     H.hv_vmptrst(vpA) === 0x1000, 'VMCLEAR/VMPTRLD/VMPTRST track the VMCS');
+  ok(H.hv_vmx_control_limits(0, scratch()) === S_OK && u32s(scratch(), 2)[0] === 0 &&
+     (u32s(scratch(), 2)[1] & 0x1F) === 0x1F && H.hv_vmx_set_control(vpA, 0, 0xFFFFFFFF) === S_INVALID &&
+     H.hv_vmx_set_control(vpA, 0, 1) === S_OK,
+     'VMX control fields expose allowed-0/allowed-1 masks and reject disallowed bits');
+  ok(H.hv_vmx_set_state(vpA, 0, 0) === S_OK && H.hv_vmlaunch(vpA) === -2 &&
+     H.hv_vmx_field(vpA, 4) === 34,
+     'invalid host state fails VM entry with error 34');
+  ok(H.hv_vmclear(vpA, 0x1000) === S_OK && H.hv_vmx_set_state(vpA, 1, 0) === S_OK &&
+     H.hv_vmlaunch(vpA) === -2 && H.hv_vmx_field(vpA, 4) === 33,
+     'invalid guest state fails VM entry with error 33');
+  ok(H.hv_vmclear(vpA, 0x1000) === S_OK && H.hv_vmx_set_state(vpA, 1, 1) === S_OK,
+     'VMCS clear restores valid host and guest state');
+  ok(H.hv_vmwrite(vpA, 0xDEAD, 1) === -2 && H.hv_vmx_field(vpA, 4) === 12,
+     'a bad VMCS field returns VMfailValid error 12');
+  ok(H.hv_vmwrite(vpA, 0x201A, 0) === -2 && H.hv_vmx_field(vpA, 4) === 12 &&
+     H.hv_vmwrite(vpA, 0x201A, 0x1E) === S_OK,
+     'EPTP validates memory type and four-level walk length');
+  ok(H.hv_vmwrite(vpA, 0x681E, 0x1234) === S_OK && H.hv_vmlaunch(vpA) === S_OK &&
+     H.hv_vmx_field(vpA, 1) === 2,
+     'a clear VMCS launches');
+  ok(H.hv_vmlaunch(vpA) === -2 && H.hv_vmx_field(vpA, 4) === 4,
+     'VMLAUNCH on a launched VMCS returns error 4');
+  ok(H.hv_vmx_guest_action(vpA, 10, 0) === 10 && H.hv_vmx_field(vpA, 2) === 10,
+     'a CPUID guest action produces exit reason 10');
+  ok(H.hv_vmx_guest_action(vpA, 0, 0) === 0 && H.hv_vmx_guest_action(vpA, 1, 0) === 1 &&
+     H.hv_vmx_guest_action(vpA, 28, 0) === 28 && H.hv_vmx_guest_action(vpA, 30, 0x3F8) === 0,
+     'exception, external interrupt and CR-access exits are modeled while unbitmaped I/O continues');
+  const pfn = pfnFor(A, 0x40000);
+  ok(H.hv_ept_map(vpA, 0x40000, pfn, 2) === S_OK &&
+     H.hv_ept_walk_flags(vpA, 0x40000) === 2 &&
+     H.hv_vmx_guest_action(vpA, 0x30, 0x40000 | 1) === 48,
+     'a four-level EPT walk finds the mapped permissions and write violation produces exit reason 48');
+  ok(H.hv_ept_map(vpA, 0x40000, pfn, 3) === S_OK &&
+     H.hv_vmx_guest_action(vpA, 0x30, 0x40000 | 1) === 48 &&
+     H.hv_invept(vpA, 0) === S_OK && H.hv_vmx_guest_action(vpA, 0x30, 0x40000 | 1) === 0,
+     'INVEPT invalidates a stale EPT translation');
+  ok(H.hv_ept_field(vpA, 0x40000, 1) === 1 && H.hv_ept_field(vpA, 0x40000, 2) === 1,
+     'successful EPT access sets accessed and dirty bits');
+  ok(H.hv_ept_map(vpA, 0x41000, pfn, 1) === S_OK &&
+     H.hv_vmx_guest_action(vpA, 0x30, 0x41000 | 1) === 49,
+     'an EPT write-without-read entry produces misconfiguration exit 49');
+  ok(H.hv_vmx_set_vpid(vpA, 7) === S_OK && H.hv_vmx_field(vpA, 6) === 7 &&
+     H.hv_invvpid(vpA, 0, 6) === S_INVALID && H.hv_invvpid(vpA, 0, 7) === S_OK &&
+     H.hv_flush_virtual_address_space(A, 0) === S_OK,
+     'VPID invalidation and address-space flushes clear cached translations');
+  ok(H.hv_vmx_guest_action(vpA, 49, 0) === 49 && H.hv_vmresume(vpA) === S_OK,
+     'EPT misconfiguration is an exit 49 and VMRESUME returns to the guest');
+  ok(H.hv_vmx_inject_interrupt(vpA, 0x30) === S_OK && H.hv_vmx_field(vpA, 8) === 1 &&
+     H.hv_vmx_set_guest_if(vpA, 1) === S_OK && H.hv_vmx_field(vpA, 8) === 0,
+     'interrupt injection waits for IF and is delivered at VM entry');
+  ok(H.hv_vm_entry(vpA) === 1 && H.hv_vmx_field(vpA, 11) === 0x30 && H.hv_vmx_field(vpA, 8) === 0,
+     'the next VM entry records delivery of the injected interrupt');
+  ok(H.hv_vmx_set_msr_bitmap(vpA, 0x40000020, 1, 0) === S_OK &&
+     H.hv_vmx_guest_action(vpA, 31, 0x40000020) === 31 &&
+     H.hv_vmx_guest_action(vpA, 31, 0x40000021) === 0,
+     'the MSR bitmap exits only for selected reads');
+  ok(H.hv_vmx_guest_action(vpA, 30, 0x3F8) === 0 &&
+     H.hv_vmx_set_io_bitmap(vpA, 0x3F8, 1, 0) === S_OK &&
+     H.hv_vmx_guest_action(vpA, 30, 0x3F8) === 30 && H.hv_vmx_guest_action(vpA, 30, 0x2F8) === 0,
+     'the I/O bitmap exits only for selected ports');
+  ok(H.hv_vmx_set_preemption_timer(vpA, 5) === S_OK && H.hv_vmx_field(vpA, 9) === 5,
+     'the VMX preemption timer is programmable');
+  pump(4, 1);
+  ok(H.hv_vmx_field(vpA, 9) === 0 && H.hv_vmx_field(vpA, 2) === 52,
+     'the VMX preemption timer stops the VP with exit reason 52');
+  ok(H.hv_vmresume(vpA) === S_OK && H.hv_vmx_field(vpA, 2) === 0,
+     'VMRESUME clears the preemption-timer exit');
+  ok(H.hv_vmx_nested_enter(vpA) === S_OK && H.hv_vmx_field(vpA, 10) === 1 &&
+     H.hv_vmx_nested_set_vmcs12(vpA, 1, 0x1234) === S_OK &&
+     H.hv_vmx_nested_set_vmcs12(vpA, 99, 1) === S_INVALID &&
+     H.hv_vmx_nested_merge(vpA) === S_OK &&
+     H.hv_vmx_nested_field(vpA, 0, 1) === 0x1234 &&
+     H.hv_vmx_nested_field(vpA, 1, 1) === 0x1234 && H.hv_vmx_field(vpA, 15) === 1,
+     'nested VMX validates and materialises VMCS12 into a shadow VMCS02');
+  ok(H.hv_vmx_nested_action(vpA, 10, 0) === 10 && H.hv_vmx_field(vpA, 12) === 0 &&
+     H.hv_vmx_nested_field(vpA, 1, 5) === 10,
+     'an L2 exit is consumed by L0 when L1 did not request reflection');
+  ok(H.hv_vmx_nested_set_reflect(vpA, 10, 1) === S_OK &&
+     H.hv_vmx_nested_action(vpA, 10, 0) === 10 && H.hv_vmx_field(vpA, 12) === 10 &&
+     H.hv_vmx_field(vpA, 14) === 0 && H.hv_vmx_nested_field(vpA, 0, 5) === 10 &&
+     H.hv_vmx_nested_exit(vpA) === S_OK && H.hv_vmx_field(vpA, 10) === 0,
+     'nested VMX reflects a selected L2 exit to the L1 VMCS');
+  ok(H.hv_vmx_off(vpA) === S_OK && H.hv_vmx_field(vpA, 0) === 0,
+     'VMXOFF clears the active VMX state');
+}
+
+/* ---- 27. guest ISA interpreter / secure image / nested L2 --------------- */
+{
+  const I = part('ISA Secure Guest');
+  const ivp = H.hv_vp_create(I, 0);
+  ok(ivp > 0 && H.hv_partition_init(I) === S_OK && H.hv_partition_start(I) === S_OK,
+     'create and start a partition for the mediated guest ISA');
+  const code = [
+    isaInstr(ISA.MOVI, 4, 0, 0, 0x50000),
+    isaInstr(ISA.MOVI, 0, 0, 0, 7),
+    isaInstr(ISA.MOVI, 1, 0, 0, 5),
+    isaInstr(ISA.ADD, 2, 0, 1),
+    isaInstr(ISA.STORE, 0, 4, 2, 0),
+    isaInstr(ISA.LOAD, 3, 4, 0, 0),
+    isaInstr(ISA.HALT),
+  ];
+  ok(writeIsa(I, 0x40000, code) === S_OK, 'load a fixed-width guest program through the checked GPA writer');
+  ok(H.hv_isa_reset(ivp, 0x40000, 1, 0) === S_OK && H.hv_isa_field(ivp, 1) === 0,
+     'reset the interpreter at an executable VTL0 entry');
+  ok(H.hv_isa_step(ivp, 64) === code.length && H.hv_isa_field(ivp, 5) === 1 &&
+     H.hv_isa_field(ivp, 3) === 12 && H.hv_isa_reg(ivp, 3) === 12,
+     'arithmetic, mediated load/store, and HLT execute at instruction boundaries');
+  H.hv_read_gpa(I, 0x50000, scratch(), 4);
+  ok(u32s(scratch(), 1)[0] === 12, 'the interpreted store changed guest memory through SLAT');
+
+  ok(H.hv_enable_partition_vtl(I, 1) === S_OK && H.hv_enable_vp_vtl(ivp, 1) === S_OK,
+     'enable VTL1 for the secure image context');
+  const imageHash = H.hv_page_hash(I, 0x40000);
+  ok(H.hv_hvci_sign_page(I, 0x40000, imageHash) === S_OK &&
+     H.hv_hvci_set_execute(I, 0x40000) === S_OK &&
+     H.hv_isa_reset(ivp, 0x40000, 1, 1) === S_OK && H.hv_isa_field(ivp, 11) === 1,
+     'a signed image starts in its own VTL1 interpreter context');
+  ok(H.hv_isa_step(ivp, 64) === code.length && H.hv_isa_reg(ivp, 3) === 12 &&
+     H.hv_isa_field(ivp, 3) === 12,
+     'the VTL1 secure image resumes and completes independently');
+
+  ok(H.hv_isa_reset(ivp, 0x41000, 1, 0) === S_OK && H.hv_isa_step(ivp, 1) === 0 &&
+     H.hv_isa_field(ivp, 3) === 48 && H.hv_isa_field(ivp, 7) > 0,
+     'an unsigned VTL0 instruction fetch is refused by HVCI as an EPT-style execute fault');
+
+  /* An explicit nested EPT maps a different code page and is consulted by
+     every interpreter fetch. */
+  ok(H.hv_vmx_on(ivp) === S_OK && H.hv_vmclear(ivp, 0x3000) === S_OK &&
+     H.hv_vmptrld(ivp, 0x3000) === S_OK && H.hv_vmwrite(ivp, 0x681E, 0x40000) === S_OK &&
+     H.hv_vmlaunch(ivp) === S_OK && H.hv_vmx_nested_enter(ivp) === S_OK,
+     'enter the interpreter as a nested L2 after VMCS launch');
+  const ipfn = guestPfn(I, 0x40000);
+  const idfn = guestPfn(I, 0x50000);
+  ok(H.hv_ept_map(ivp, 0x40000, ipfn, 6) === S_OK && H.hv_ept_map(ivp, 0x50000, idfn, 3) === S_OK &&
+     H.hv_isa_reset(ivp, 0x40000, 1, 1) === S_OK && H.hv_isa_step(ivp, 64) === code.length &&
+     H.hv_isa_field(ivp, 3) === 12,
+     'L2 instruction fetches and data accesses use the effective EPT');
+  ok(H.hv_ept_map(ivp, 0x40000, ipfn, 3) === S_OK &&
+     H.hv_invept(ivp, 0) === S_OK && H.hv_isa_reset(ivp, 0x40000, 1, 1) === S_OK &&
+     H.hv_isa_step(ivp, 1) === 0 && H.hv_isa_field(ivp, 3) === 48,
+     'an L2 execute violation exits before the instruction and is resumable');
+  ok(H.hv_isa_stop(ivp) === S_OK && H.hv_vmx_nested_exit(ivp) === S_OK && H.hv_vmx_off(ivp) === S_OK,
+     'stop and tear down the resumable interpreter context');
+  H.hv_partition_stop(I);
+}
+
+
+/* ---- 22. hypervisor log ------------------------------------------------- */
 {
   const t = logText();
   ok(t.length > 200, 'hypervisor log has content', t.length);
