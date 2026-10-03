@@ -182,3 +182,28 @@ The deterministic model can also be exercised without a browser by loading the
 two scripts in a DOM harness that stubs `W98.reg`, `W98.fs`, and
 `W98.registerApp`.  Feed the ten stage IDs above and assert the returned record
 instead of relying on wall-clock timing.
+
+## Merged kernel and Hyper-V compatibility
+
+The recovery model does not parse or replace kernel snapshots.  Its profile,
+record, Last Known Good subset, failure flag, and bounded `BOOTLOG.TXT` are
+stored through `W98.reg` and `W98.fs`; the merged kernel persists `KREG3` and
+continues to load `KREG1` and `KREG2`.  This keeps recovery actions from
+bypassing the IndexedDB-backed kernel state.
+
+When no live stage observation is supplied, the Hyper-V stage reads only the
+documented `W98HV` surface (`mode`, `partitions()`, `guest()`, and `vmbus()`).
+It matches partition and channel IDs returned by those methods, never array
+slots or contiguous IDs.  An unavailable integration surface or a closed
+channel is recorded as a readable degraded stage; a faulted or halted guest is
+recorded as `W98-HV-002` with recovery guidance.  A real `desk.js` stage entry
+still takes precedence, so the integration can feed its own observation.
+
+The model also inspects the high-level kernel executive state through
+`W98.hv.bugcheck()` when the kernel-side adapter is present, and through the
+existing `W98.kernel.exec()` executive snapshot otherwise.  A halted kernel or
+bugcheck becomes a bounded `W98-KERNEL-HALTED` failure with the dump retained
+in the record and log; the recovery UI presents it without trying to resume,
+replace, or discard kernel state.  Failure lists, guidance, stage details,
+registry values, and logs are capped so malformed integration input remains
+readable.

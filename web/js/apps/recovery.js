@@ -74,7 +74,7 @@
     '.rc-stage-name{flex:0 0 143px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.rc-stage-detail{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#404040}',
     '.rc-state{flex:0 0 48px;text-align:right;font-weight:bold}',
-    '.rc-state.ok,.rc-state.passed,.rc-state.recovered{color:#006000}.rc-state.failed{color:#800000}.rc-state.skipped{color:#806000}.rc-state.pending{color:#404040}',
+    '.rc-state.ok,.rc-state.passed,.rc-state.recovered{color:#006000}.rc-state.failed{color:#800000}.rc-state.degraded,.rc-state.skipped{color:#806000}.rc-state.pending{color:#404040}',
     '.rc-log{font:11px/15px "Lucida Console","Courier New",monospace;white-space:pre;overflow:auto;flex:1 1 auto;min-height:80px;background:#fff;color:#000;border:1px solid #808080;border-right-color:#fff;border-bottom-color:#fff;box-shadow:inset 1px 1px 0 #000;padding:4px}',
     '.rc-note{font-size:10px;color:#404040;line-height:14px}',
     '.rc-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}',
@@ -112,7 +112,7 @@
   }
   function jsonSet(name, value) { regSet(name, JSON.stringify(value)); }
   function profileService() {
-    var b = W98.bootProfile || W98.bootProfiles || W98.bootRecovery || window.W98BootProfile;
+    var b = W98.bootProfile || W98.bootProfiles || W98.bootRecovery || window.W98BootProfile || window.W98BootProfiles;
     return b && typeof b === 'object' ? b : null;
   }
   function callService(names, args) {
@@ -141,6 +141,13 @@
       (d.getHours() < 12 ? ' AM' : ' PM');
   }
   function safeText(v, dflt) { return v == null || v === '' ? dflt : String(v); }
+  function boundedText(v, limit) {
+    var s = safeText(v, '');
+    return s.length > limit ? s.slice(0, limit - 18) + '\n...[truncated]' : s;
+  }
+  function textList(value, limit) {
+    return Array.isArray(value) ? value.slice(0, 24).map(function (x) { return boundedText(x, limit); }) : [];
+  }
   function defaultStages() {
     return STAGE_NAMES.map(function (x) {
       return { id: x[0], name: x[1], status: 'ok', detail: 'Completed' };
@@ -155,7 +162,9 @@
       timestamp: safeText(regGet('LastBootTime', ''), nowText()),
       profile: safeText(regGet('ActiveProfile', ''), safeText(regGet('SelectedProfile', ''), 'Normal Mode')),
       stages: defaultStages(),
-      failures: jsonGet('Failures', { devices: [], services: [] })
+      failures: jsonGet('Failures', { devices: [], services: [] }),
+      degradations: [],
+      kernelState: { halted: false, code: null, params: [], dump: '' }
     };
   }
   function normalizeStages(stages) {
@@ -164,7 +173,9 @@
     source.forEach(function (s) {
       if (!s) { return; }
       var id = s.id || s.key || String(s.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      byId[id] = { id: id, name: s.name || s.label || id, status: String(s.status || (s.ok === false ? 'failed' : 'ok')).toLowerCase(), detail: safeText(s.detail || s.message, '') };
+      var status = String(s.status || (s.ok === false ? 'failed' : 'ok')).toLowerCase();
+      if (status === 'complete' || status === 'completed' || status === 'success') status = 'passed';
+      byId[id] = { id: id, name: s.name || s.label || id, status: status, detail: boundedText(s.detail || s.message, 768) };
     });
     return STAGE_NAMES.map(function (x) {
       return byId[x[0]] || { id: x[0], name: x[1], status: 'pending', detail: 'No record' };
@@ -186,23 +197,34 @@
       timestamp: safeText(stamp, d.timestamp),
       profile: safeText(profile, d.profile),
       stages: normalizeStages(v.stages || v.stageResults || d.stages),
-      failures: v.failures || d.failures
+      failures: v.failures || d.failures,
+      degradations: Array.isArray(v.degradations) ? v.degradations.slice(0, 24) : [],
+      kernelState: v.kernelState || v.kernel || v.bugcheck || d.kernelState
     };
     if (result.status === 'ok' || result.status === 'passed' || result.status === 'complete') { result.status = 'success'; }
     if (result.status === 'failed' || result.status === 'error') result.status = 'failed';
+    if (result.status === 'warn' || result.status === 'degraded') result.status = 'degraded';
+    if (result.kernelState && typeof result.kernelState === 'object') {
+      result.kernelState = {
+        halted: !!(result.kernelState.halted || result.kernelState.haltedFlag),
+        code: result.kernelState.code == null ? null : result.kernelState.code,
+        params: Array.isArray(result.kernelState.params) ? result.kernelState.params.slice(0, 4) : [],
+        dump: safeText(result.kernelState.dump, '').slice(0, 16384)
+      };
+    } else result.kernelState = d.kernelState;
     if (!v.summary && Array.isArray(v.failures) && v.failures.length) result.summary = v.failures[0].message || 'One or more startup stages failed.';
     return result;
   }
   function normalizeLog(v, result) {
-    if (Array.isArray(v)) return v.map(String).join('\n');
+    if (Array.isArray(v)) return boundedText(v.map(String).join('\n'), 49152);
     if (v && typeof v === 'object') {
-      if (Array.isArray(v.lines)) return v.lines.map(String).join('\n');
-      if (typeof v.text === 'string') return v.text;
+      if (Array.isArray(v.lines)) return boundedText(v.lines.map(String).join('\n'), 49152);
+      if (typeof v.text === 'string') return boundedText(v.text, 49152);
     }
-    if (typeof v === 'string' && v) return v;
-    return result.stages.map(function (s) {
+    if (typeof v === 'string' && v) return boundedText(v, 49152);
+    return boundedText(result.stages.map(function (s) {
       return '[' + (s.status === 'failed' ? 'FAIL' : s.status.toUpperCase()) + '] ' + s.name + (s.detail ? ' - ' + s.detail : '');
-    }).join('\n');
+    }).join('\n'), 49152);
   }
   function profiles() {
     var r = callService(['listProfiles', 'getProfiles', 'profiles'], []);
@@ -256,21 +278,23 @@
     if (Array.isArray(f)) {
       var arr = f, out = { devices: [], services: [] };
       arr.forEach(function (x) {
+        if (out.devices.length + out.services.length >= 24) return;
         x = x || {};
-        var msg = String(x.message || x.detail || x.stage || x);
-        if (x.kind === 'virtual-device' || x.kind === 'device') out.devices.push(msg);
+        var msg = boundedText(x.message || x.detail || x.stage || x, 768);
+        if (x.kind === 'virtual-device' || x.kind === 'device' || x.kind === 'hyperv') out.devices.push(msg);
         else out.services.push(msg);
       });
       return out;
     }
     return {
-      devices: (f.devices || f.virtualDevices || []).map(String),
-      services: (f.services || f.drivers || []).map(String)
+      devices: textList(f.devices || f.virtualDevices, 768),
+      services: textList(f.services || f.drivers, 768)
     };
   }
   function writeBootLog(text) {
-    regSet('BootLog', text);
-    try { if (W98.fs && W98.fs.writeText) W98.fs.writeText(BOOT_LOG, text); } catch (e) { /* optional filesystem */ }
+    var body = boundedText(text, 49152);
+    regSet('BootLog', body);
+    try { if (W98.fs && W98.fs.writeText) W98.fs.writeText(BOOT_LOG, body); } catch (e) { /* optional filesystem */ }
   }
   function toast(message, kind) {
     var box = document.querySelector('.rc-status');
@@ -350,7 +374,7 @@
       var list = mk('div', 'rc-list grow');
       stages.forEach(function (s) {
         var row = mk('div', 'rc-list-row');
-        var bulb = mk('span', 'rc-bulb ' + (s.status === 'failed' ? 'bad' : (s.status === 'skipped' ? 'warn' : '')));
+        var bulb = mk('span', 'rc-bulb ' + (s.status === 'failed' ? 'bad' : (s.status === 'skipped' || s.status === 'degraded' ? 'warn' : '')));
         row.appendChild(bulb); row.appendChild(mk('span', 'rc-stage-name', s.name));
         row.appendChild(mk('span', 'rc-stage-detail', s.detail || ''));
         row.appendChild(mk('span', 'rc-state ' + (s.status || 'pending'), (s.status || 'pending').toUpperCase()));
@@ -383,10 +407,17 @@
       inner.appendChild(top);
 
       var state = group('Last boot result');
-      var status = mk('div', 'rc-status ' + (result.status === 'failed' ? 'bad' : 'ok'));
-      status.textContent = (result.status === 'failed' ? 'FAILED — ' : 'SUCCESS — ') + result.summary +
+      var halted = result.kernelState && result.kernelState.halted;
+      var degraded = result.status === 'degraded' || (result.degradations && result.degradations.length);
+      var status = mk('div', 'rc-status ' + (result.status === 'failed' || halted ? 'bad' : (degraded ? '' : 'ok')));
+      status.textContent = (result.status === 'failed' || halted ? 'FAILED — ' : (degraded ? 'DEGRADED — ' : 'SUCCESS — ')) + result.summary +
         '\nProfile: ' + result.profile + '    Time: ' + result.timestamp +
         '\nFailed-startup flag: ' + (result.failedStartup ? 'SET' : 'CLEAR');
+      if (halted) {
+        status.textContent += '\nKernel: HALTED after bugcheck' + (result.kernelState.code == null ? '' : ' 0x' + Number(result.kernelState.code).toString(16).padStart(8, '0')) +
+          '. Preserve the dump and restart in Safe Mode.';
+      }
+      if (degraded) status.textContent += '\nHyper-V or another integration stage is running in degraded mode; review Diagnostics.';
       state.appendChild(status);
       var actions = mk('div', 'rc-actions');
       actions.appendChild(button('Clear failed-startup flag', function () {
@@ -459,6 +490,21 @@
       two.appendChild(failedList('Failed virtual devices', f.devices, 'No virtual devices failed.'));
       two.appendChild(failedList('Failed services and drivers', f.services, 'No services or local drivers failed.'));
       inner.appendChild(two);
+      var kernel = group('Kernel state');
+      var ks = result.kernelState || {};
+      if (ks.halted) {
+        kernel.appendChild(mk('div', 'rc-status bad', 'Kernel halted after a bugcheck. The recovery utility has preserved the bounded diagnostic dump.'));
+        var dump = mk('pre', 'rc-log', safeText(ks.dump, '(No bugcheck dump was returned by the kernel.)'));
+        dump.style.maxHeight = '112px'; dump.style.flex = '0 1 auto';
+        kernel.appendChild(dump);
+      } else {
+        kernel.appendChild(mk('div', 'rc-note', 'The kernel reports a running state. Recovery actions leave kernel and registry state intact.'));
+      }
+      if (result.degradations && result.degradations.length) {
+        var dg = mk('div', 'rc-note', 'Degraded stages: ' + result.degradations.map(function (x) { return x.stage || x.stageId || x.message; }).join('; '));
+        kernel.appendChild(dg);
+      }
+      inner.appendChild(kernel);
       var startup = group('Startup programs');
       startup.appendChild(mk('div', 'rc-note', 'Reset the per-user startup list if a corrupted entry prevents the shell from loading.'));
       var sr = mk('div', 'rc-actions');
