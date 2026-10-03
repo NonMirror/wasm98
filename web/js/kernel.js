@@ -369,30 +369,70 @@
     if (saveTimer) return;
     saveTimer = setTimeout(function () { saveTimer = null; flush(); }, 1200);
   }
+  function serializeFsWasm() {
+    if (!wasm || !API.fs || typeof API.fs.list !== 'function') throw new Error('filesystem is not mounted');
+    var lines = ['KFS1'];
+    function walk(dir) {
+      var entries = API.fs.list(dir);
+      if (!entries) throw new Error('unable to enumerate ' + dir);
+      if (!entries.length && dir !== 'C:\\' && dir !== 'A:\\') {
+        lines.push('1|0|0|' + dir + '|');
+        return;
+      }
+      entries.forEach(function (entry) {
+        var path = dir + (dir.charAt(dir.length - 1) === '\\' ? '' : '\\') + entry.name;
+        if (entry.dir) return walk(path);
+        var bytes = API.fs.readBytes(path);
+        if (!bytes) throw new Error('unable to read ' + path);
+        lines.push('0|' + (Number(entry.mtime) || 0) + '|' + bytes.length + '|' + path + '|' + b64Encode(bytes));
+      });
+    }
+    walk('C:\\');
+    walk('A:\\');
+    return lines.join('\n') + '\n';
+  }
+  function serializeRegWasm() {
+    if (!wasm || typeof wasm.k_reg_enum_count !== 'function') throw new Error('registry is not mounted');
+    var lines = ['KREG1'];
+    var count = wasm.k_reg_enum_count();
+    for (var i = 0; i < count; i++) {
+      if (wasm.k_reg_enum(i) !== 1) continue;
+      var path = readText(wasm.k_reg_enum_path_ptr(), wasm.k_reg_enum_path_len()).replace(/[\0\t\r\n]/g, '');
+      var name = readText(wasm.k_reg_enum_name_ptr(), wasm.k_reg_enum_name_len()).replace(/[\0\t\r\n]/g, '');
+      if (!path || !name) continue;
+      var value = tmpText();
+      /* KREG1 is the legacy string-value frame understood by every kernel
+         build.  The flat W98 registry API exposes values as strings, so this
+         preserves application state while avoiding the native fixed-size
+         NT serializer and its KREG3 hive metadata buffer. */
+      lines.push(path + '\t' + name + '\t' + b64Encode(enc.encode(value)));
+    }
+    return lines.join('\n') + '\n';
+  }
   function flush() {
     if (!dirty || !wasm) return Promise.resolve(false);
     dirty = false;
     var fsBlob, regBlob;
     try {
-      var n = wasm.k_fs_save();
-      fsBlob = readText(wasm.k_tmp_ptr(), n);
-      n = wasm.k_reg_save();
-      regBlob = readText(wasm.k_tmp_ptr(), n);
+      /* The kernel's KFS1 writer is bounded by its diagnostic TMP buffer.
+         User files can exceed that buffer, so walk the mounted tree here and
+         assemble the same public image in JavaScript.  The shim and the
+         loader continue to consume the identical KFS1 format. */
+      fsBlob = serializeFsWasm();
+      regBlob = serializeRegWasm();
     } catch (e) { return Promise.resolve(false); }
     flushCount++;
     return idbWrite({ fs: fsBlob, reg: regBlob, savedAt: Date.now() });
   }
   /* ------------------------------------------------ persistent state bridge */
-  /* Restore points use the kernel's own KFS1/KREG serializer.  Keep this
-     small bridge here instead of teaching an application how to walk the
-     filesystem or hive.  The bridge also gives the JS shim the same shape so
-     the System Restore UI can remain usable when WebAssembly is unavailable. */
+  /* Restore points use the kernel's KFS1/KREG image formats.  The bridge
+     keeps serialization here instead of teaching an application how to walk
+     the filesystem or hive, and gives the JS shim the same shape so System
+     Restore remains usable when WebAssembly is unavailable. */
   function persistentStateWasm() {
     if (!wasm) return null;
-    var n = wasm.k_fs_save();
-    var fsBlob = readText(wasm.k_tmp_ptr(), n);
-    n = wasm.k_reg_save();
-    var regBlob = readText(wasm.k_tmp_ptr(), n);
+    var fsBlob = serializeFsWasm();
+    var regBlob = serializeRegWasm();
     return { fs: fsBlob, reg: regBlob };
   }
   function resetWasmForPersistentRestore() {

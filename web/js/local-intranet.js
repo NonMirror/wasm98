@@ -152,7 +152,14 @@
     try {
       Object.keys(pages).forEach(function (name) {
         var p = pathFor(name);
-        if (!fs.exists(p)) fs.writeText(p, pages[name]);
+        var missing = !fs.exists(p);
+        /* A previous interrupted seed can leave a zero-byte placeholder.  It
+           is safe to repair that fixture, while nonempty user edits remain
+           untouched and continue to be served by the filesystem renderer. */
+        if (!missing && fs.stat) {
+          try { var st = fs.stat(p); missing = !st || Number(st.size) === 0; } catch (e) { /* keep the existing file */ }
+        }
+        if (missing) fs.writeText(p, pages[name]);
       });
       ensureDir(pathFor('SHARED\\PUBLIC'));
       ensureDir(pathFor('SHARED\\PUBLIC\\FORMS'));

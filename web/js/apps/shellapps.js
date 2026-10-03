@@ -2338,11 +2338,33 @@
     games: 'GAMES.HTM', kernel: 'KERNEL.HTM', search: 'SEARCH.HTM'
   };
 
+  /* The local intranet is a filesystem-backed model.  Resolve only its
+     explicit host/protocol (and the fixture's relative page names) here so
+     ordinary Internet addresses continue through IE's offline error page. */
+  function ieLocalIntranetTarget(input) {
+    var adapter = W98.localIntranet;
+    if (!adapter || typeof adapter.resolve !== 'function') return null;
+    var s = String(input == null ? '' : input).replace(/^\s+|\s+$/g, '');
+    var isFixture = /^(?:welcome|directory|help|status|files|bulletin|search)(?:\.html?)?(?:[?#].*)?$/i.test(s);
+    var isHost = /^(?:https?:\/\/)?(?:intranet\.w98\.local|intranet)(?:[/:?#]|$)/i.test(s) ||
+      /^intranet:\/\//i.test(s) || /^C:\\WINDOWS\\INTRANET(?:\\|\/|$)/i.test(s);
+    if (!isFixture && !isHost) return null;
+    var result = safe(function () { return adapter.resolve(s); }, null);
+    if (!result) return null;
+    if (!result.ok) return { kind: 'intranet-error', input: s, error: result.error || result };
+    return {
+      kind: 'file', path: result.filesystemPath || result.path, input: s,
+      label: result.label || 'W98 Company Intranet', html: result.html || '', localIntranet: true
+    };
+  }
+
   function ieTargetFor(input) {
     var s = String(input == null ? '' : input).replace(/^\s+|\s+$/g, '');
     if (!s || s.toLowerCase() === 'about:blank') return { kind: 'blank', label: 'about:blank' };
     var low = s.toLowerCase();
     if (IE_BUILTIN[low]) return { kind: 'file', path: joinPath(IE_DIR, IE_BUILTIN[low]), input: low };
+    var intranetTarget = ieLocalIntranetTarget(s);
+    if (intranetTarget) return intranetTarget;
     if (/^(https?|ftp|gopher|mailto|news|javascript):/i.test(s)) return { kind: 'remote', url: s };
     if (/^about:/i.test(s)) return { kind: 'blank', label: s, input: s };
     if (/^app:/i.test(s)) return { kind: 'app', id: s.slice(4), input: s };
@@ -2783,6 +2805,14 @@
       function renderTarget(t, opts) {
         opts = opts || {};
         if (t.kind === 'app') { stopLoading(); W98.launch(t.id, {}); return; }
+        if (t.kind === 'intranet-error') {
+          stopLoading();
+          addrIn.value = t.input || '';
+          var intranetError = t.error || {};
+          errorPage(intranetError.message || 'Cannot find server or DNS Error', intranetError.status || intranetError.code || 'intranet');
+          if (!opts.noHistory) push({ input: t.input || '', label: 'The W98 intranet could not be reached' });
+          return;
+        }
         if (t.kind === 'blank') {
           showHTML('', 'about:blank');
           addrIn.value = 'about:blank';
@@ -2808,6 +2838,13 @@
         /* a local file */
         var data = safe(function () { return W98.fs.readBytes(t.path); }, null);
         if (!data) {
+          if (t.localIntranet && t.html) {
+            showHTML(t.html, t.label || t.path);
+            addrIn.value = t.input || t.path;
+            if (!opts.noHistory) push({ input: t.input || t.path, label: t.label || t.path });
+            status('Done', 'W98 intranet');
+            return;
+          }
           stopLoading();
           addrIn.value = t.path;
           missingPage(t.path);

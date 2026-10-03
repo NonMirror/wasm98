@@ -1266,6 +1266,35 @@
   function trace(msg) {
     (W98.__bootTrace = W98.__bootTrace || []).push(Math.round(performance.now()) + 'ms ' + msg);
   }
+
+  /* The recovery model is optional: a reduced host page may omit its support
+     script, but that must never stop the ordinary desktop boot.  When present,
+     record the same ten deterministic stages that the Recovery app displays.
+     The model owns persistence and failure simulation; this adapter only feeds
+     the selected profile and captures a known-good registry subset after a
+     successful normal boot. */
+  function runBootProfile() {
+    var bp = W98.bootProfile;
+    if (!bp || typeof bp.runBoot !== 'function') return null;
+    try {
+      if (typeof bp.load === 'function') bp.load();
+      var profile = typeof bp.consumeNextProfile === 'function' ? bp.consumeNextProfile() :
+        (typeof bp.getSelectedProfile === 'function' ? bp.getSelectedProfile() : null);
+      var options = {};
+      if (profile && profile.id) options.profile = profile.id;
+      var record = bp.runBoot(options);
+      if (record && record.success && profile && profile.id !== 'safe-command' &&
+          typeof bp.captureLastKnownGood === 'function') {
+        bp.captureLastKnownGood();
+      }
+      W98.__bootProfileRecord = record || null;
+      return record || null;
+    } catch (e) {
+      trace('boot profile unavailable: ' + (e && e.message || e));
+      return null;
+    }
+  }
+
   function boot() {
     trace('boot start, readyState=' + document.readyState);
     if (W98.__bootStarted) return; W98.__bootStarted = true;
@@ -1297,13 +1326,24 @@
       var schemeName = W98.reg.get('HKEY_CURRENT_USER\\Control Panel\\Desktop', 'ColorScheme', 'Windows Standard');
       if (W98.applyScheme) W98.applyScheme(schemeName);
       var st = K.stats();
+      var profileRecord = runBootProfile();
+      var profileLines = [];
+      if (profileRecord) {
+        profileLines.push('startup profile: ' + (profileRecord.profile && profileRecord.profile.label || 'Normal Mode') +
+          ' (' + (profileRecord.success ? 'success' : 'failed') + ')');
+        profileRecord.stages.forEach(function (stage) {
+          var mark = stage.status === 'passed' ? 'OK' : (stage.status === 'skipped' ? 'SKIP' :
+            (stage.status === 'degraded' ? 'WARN' : (stage.status === 'recovered' ? 'REC' : 'FAIL')));
+          profileLines.push('[' + mark + '] ' + stage.label + (stage.detail ? ': ' + stage.detail : ''));
+        });
+      }
       showBootScreen([
         'Windows 98 (kernel.wasm ' + (K.mode === 'wasm' ? 'wasm32' : 'shim') + ')',
         'kernel heap ' + Math.round(st.HEAP_FREE / 1024) + ' KB free / ' + Math.round(st.HEAP_SIZE / 1024) + ' KB',
         'volume: ' + st.FILES + ' files, ' + st.BYTES + ' bytes',
         'registry: ' + st.REG + ' values',
         'processors: 1 (WebAssembly, ' + (K.mode === 'wasm' ? Math.round(K.moduleBytes / 1024) + ' KB image' : 'fallback') + ')'
-      ]);
+      ].concat(profileLines));
       trace('desktop build');
       try { applyDesktop(); } catch (e) { console.warn('wallpaper', e); }
       try { W98.shell.seedSampleFiles(); } catch (e) { console.warn('seed extras', e); }

@@ -133,10 +133,17 @@
         if (decoded !== size) throw fail('malformed', 'Filesystem image data length does not match its record');
       } else {
         var r = line.split('\t');
+        if (hdr === 'KREG3' && r[0] === '@APP') {
+          /* Application-hive declarations carry no value payload.  Older
+             kernels may omit the trailing empty field, so validate the
+             declaration separately before handling ordinary values. */
+          if (r.length < 3 || !/^\d+$/.test(r[2])) throw fail('malformed', 'Malformed registry image record: ' + line.slice(0, 100));
+          return;
+        }
         if (hdr === 'KREG2' || hdr === 'KREG3') {
-          if (r.length < 4 || !r[0] || !r[1] || !/^\d+$/.test(r[2])) throw fail('malformed', 'Malformed registry image record');
+          if (r.length < 4 || !r[0] || !r[1] || !/^\d+$/.test(r[2])) throw fail('malformed', 'Malformed registry image record: ' + line.slice(0, 100));
           r = [r[0], r[1], r[2], r.slice(3).join('\t')];
-        } else if (r.length < 2 || !r[0]) throw fail('malformed', 'Malformed registry image record');
+        } else if (r.length < 2 || !r[0]) throw fail('malformed', 'Malformed registry image record: ' + line.slice(0, 100));
         var b = (hdr === 'KREG2' || hdr === 'KREG3') ? r[3] : (r.length > 2 ? r.slice(2).join('\t') : '');
         if (b && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b)) throw fail('malformed', 'Malformed registry image data');
       }

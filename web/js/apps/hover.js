@@ -414,7 +414,7 @@
   function blockContext(ev) { ev.preventDefault(); }
 
   appDef = {
-    id: APP_ID, title: APP_TITLE, icon: 'hover', width: CW, height: CH,
+    id: APP_ID, title: APP_TITLE, icon: 'jezzball', width: CW, height: CH,
     minWidth: CW, minHeight: CH, resizable: false, maximizable: false,
     desktop: true, startMenuGroup: 'Games', singleton: true,
     text: 'Pilot a hovercraft through a deterministic course of signal beacons.',
