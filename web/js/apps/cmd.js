@@ -93,6 +93,24 @@
         return (base.slice(0, 8).toUpperCase() + (ext ? '.' + ext.slice(0, 3).toUpperCase() : ''));
       }
       function ok(msg) { if (msg) print(msg); }
+      function mediaStatus(drive) {
+        try {
+          if (W98.media && typeof W98.media.status === 'function') return W98.media.status(drive);
+          if (W98.media && typeof W98.media.state === 'function') {
+            var s = W98.media.state();
+            return s[String(drive).toUpperCase() === 'A' ? 'floppy' : 'cdrom'] || null;
+          }
+        } catch (e) { }
+        return null;
+      }
+      function mutationError(result, path) {
+        if (typeof result === 'number' && result >= 0) return false;
+        var e = null;
+        try { e = W98.media && typeof W98.media.lastError === 'function' ? W98.media.lastError() : null; } catch (x) { }
+        if (e && e.message) print(e.message);
+        else print('Write fault - ' + (path || 'the disk') + '.');
+        return true;
+      }
 
       /* ---------------------------------------------------- commands */
       var CMDS = {};
@@ -130,7 +148,12 @@
       };
 
       CMDS.VER = function () { print('\nWindows 98 [Version 4.10.1998]\nkernel.wasm build ' + W98.version + ' (' + W98.kernelMode() + ')'); };
-      CMDS.VOL = function () { print('\n Volume in drive C is MS-DOS_98\n Volume Serial Number is 1998-0528'); };
+      CMDS.VOL = function (a) {
+        var d = ((a || '').trim().charAt(0) || cwd.charAt(0)).toUpperCase(), m = mediaStatus(d);
+        if (m) print('\n Volume in drive ' + d + ' is ' + m.label + '\n Volume Serial Number is ' + (m.manifestId || '1998-0528').slice(-8).toUpperCase());
+        else if ((d === 'A' || d === 'D') && !W98.fs.exists(d + ':\\')) print('Drive ' + d + ' is not ready.');
+        else print('\n Volume in drive ' + d + ' is MS-DOS_98\n Volume Serial Number is 1998-0528');
+      };
 
       CMDS.CLS = function () { clear(); };
       CMDS.EXIT = function () { win.close(); };
@@ -141,9 +164,10 @@
         var target = resolve(args[0] || '');
         var list = W98.fs.list(target);
         if (!list) { print('Invalid directory - ' + target); return; }
-        var drive = target.slice(0, 2);
-        print('\n Volume in drive ' + drive.charAt(0) + ' is MS-DOS_98');
-        print(' Volume Serial Number is 1998-0528');
+        var drive = target.slice(0, 2), media = mediaStatus(drive.charAt(0));
+        if ((drive.charAt(0).toUpperCase() === 'A' || drive.charAt(0).toUpperCase() === 'D') && !media) { print('Drive ' + drive.charAt(0).toUpperCase() + ' is not ready.'); return; }
+        print('\n Volume in drive ' + drive.charAt(0) + ' is ' + (media ? media.label : 'MS-DOS_98'));
+        print(' Volume Serial Number is ' + (media ? (media.manifestId || '1998-0528').slice(-8).toUpperCase() : '1998-0528'));
         print(' Directory of ' + target + '\n');
         var dirs = list.filter(function (e) { return e.dir; }), files = list.filter(function (e) { return !e.dir; });
         var totalBytes = files.reduce(function (x, y) { return x + y.size; }, 0);
@@ -180,7 +204,7 @@
           files.forEach(function (e) { entry(e.name, e.size, false); });
         }
         var st = W98.stats();
-        var free = 2 * 1024 * 1024 * 1024 - st.BYTES;
+        var free = media ? media.free : 2 * 1024 * 1024 * 1024 - st.BYTES;
         print(pad(files.length + ' file(s)', 15, true) + pad(totalBytes.toLocaleString('en-US'), 16) + ' bytes');
         print(pad(dirs.length + ' dir(s)', 15, true) + pad(free.toLocaleString('en-US'), 16) +
           ' bytes free (kernel heap ' + Math.round(st.HEAP_FREE / 1024) + ' KB)');
@@ -188,9 +212,14 @@
 
       CMDS.CD = function (a) {
         a = a.trim();
+        if (/^[AD]:/i.test(cwd) && !mediaStatus(cwd.charAt(0))) { print('Drive ' + cwd.charAt(0).toUpperCase() + ' is not ready.'); return; }
         if (!a || a === '.') { print(cwd); return; }
         if (a === '\\') { cwd = 'C:\\'; updatePrompt(); return; }
-        if (/^[A-Za-z]:$/.test(a)) { cwd = a.toUpperCase() + '\\'; updatePrompt(); return; }
+        if (/^[A-Za-z]:$/.test(a)) {
+          var drv = a.charAt(0).toUpperCase();
+          if ((drv === 'A' || drv === 'D') && !mediaStatus(drv)) { print('Drive ' + drv + ' is not ready.'); return; }
+          cwd = drv + ':\\'; updatePrompt(); return;
+        }
         var t = resolve(a);
         if (!W98.fs.exists(t)) { print('Invalid directory'); return; }
         if (!W98.fs.isDir(t)) { print('Invalid directory'); return; }
@@ -219,7 +248,8 @@
         var bytes = W98.fs.readBytes(src);
         if (!bytes) { print('File not found - ' + src + '\n        0 file(s) copied.'); return; }
         if (W98.fs.isDir(dst)) dst = W98.fs.join(dst, p[0].split('\\').pop());
-        W98.fs.writeBytes(dst, bytes);
+        var copied = W98.fs.writeBytes(dst, bytes);
+        if (mutationError(copied, dst)) { print('        0 file(s) copied.'); return; }
         print('        1 file(s) copied.');
       };
 
@@ -228,7 +258,9 @@
         if (!f) { print('Required parameter missing'); return; }
         var t = resolve(f);
         if (W98.fs.isDir(t)) { print('Access denied - ' + t); return; }
-        if (W98.fs.remove(t) === 0 || !W98.fs.exists(t)) print('Deleted ' + t);
+        var removed = W98.fs.remove(t);
+        if (mutationError(removed, t)) return;
+        if (removed === 0 || !W98.fs.exists(t)) print('Deleted ' + t);
         else print('File not found - ' + t);
       };
       CMDS.ERASE = CMDS.DEL;
@@ -238,16 +270,16 @@
         if (p.length < 2) { print('The syntax of the command is incorrect.'); return; }
         var src = resolve(p[0]);
         if (!W98.fs.exists(src)) { print('File not found - ' + src); return; }
-        W98.fs.rename(src, W98.fs.join(W98.fs.parent(src), p[1]));
+        mutationError(W98.fs.rename(src, W98.fs.join(W98.fs.parent(src), p[1])), src);
       };
 
-      CMDS.MD = function (a) { var t = resolve(a.trim()); W98.fs.mkdir(t); };
+      CMDS.MD = function (a) { var t = resolve(a.trim()); mutationError(W98.fs.mkdir(t), t); };
       CMDS.MKDIR = CMDS.MD;
       CMDS.RD = function (a) {
         var t = resolve(a.trim());
         var list = W98.fs.list(t) || [];
         if (list.length) { print('Directory not empty - ' + t); return; }
-        W98.fs.remove(t);
+        mutationError(W98.fs.remove(t), t);
       };
       CMDS.RMDIR = CMDS.RD;
 
@@ -387,8 +419,11 @@
         if (a.trim()) { CMDS.TYPE(a); return; }
         print('MORE: displays output one screen at a time (you are using it)');
       };
-      CMDS.FDISK = function () { print('FDISK is not supported: the kernel presents a single fixed volume C:.'); };
-      CMDS.MSCDEX = function () { print('MSCDEX Version 2.25\nCD-ROM device driver not loaded.'); };
+      CMDS.FDISK = function () { print('FDISK is not supported: the kernel presents a fixed C: volume and virtual removable media.'); };
+      CMDS.MSCDEX = function () {
+        var m = mediaStatus('D');
+        print('MSCDEX Version 2.25\n' + (m ? 'Drive D: = CD-ROM ' + m.label : 'CD-ROM device driver not loaded.'));
+      };
 
       function runExternal(cmd) {
         if (!cmd) return;
