@@ -1,11 +1,9 @@
 
 
-## Kernel Lab
+## Entertainment Pack games
 
-Load `js/apps/kernel-lab.js` after `kernel.js`, `shell.js`, and `hv.js` and
-before `desk.js`. It registers the singleton `kernel-lab` app in `System Tools`.
-The command views read only the documented kernel and hypervisor diagnostics,
-keep bounded output, and remain usable with either WASM image absent. The
-crash-lab action is the sole mutation: it invokes the existing panic/bugcheck
-entry point only after the native confirmation dialog; all other views and
-links are read-only.
+Load `js/apps/hearts.js`, `js/apps/spider.js`, and `js/apps/hover.js` after the
+other application scripts and before `desk.js`. Each is a classic
+`W98.registerApp` game in the `Games` Start-menu group, uses bounded
+window-scoped timers and keyboard claims, and stores preferences/deals through
+`W98.reg`. They have no network dependencies and preserve existing games.
