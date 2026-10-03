@@ -317,7 +317,10 @@ static u32 proc_count(void) {
 }
 
 /* ---------------------------------------------------------- the timer queue */
-typedef struct { u32 used, pid, interval, deadline, tid, oneshot; } Timer;
+typedef struct {
+    u32 used, pid, interval, deadline, tid, oneshot;
+    u32 dpc_id, tolerance, high_res, fires, coalesced;
+} Timer;
 static Timer TIMERS[MAX_TIMERS];
 static u32 FIRED[MAX_FIRED], fired_head, fired_tail, fired_drop;
 
@@ -828,6 +831,37 @@ u32 k_timer_set(u32 pid, u32 interval_ms, u32 oneshot) {
     }
     return 0;
 }
+i32 k_timer_set_ex(u32 pid, u32 interval_ms, u32 oneshot, u32 dpc_id, u32 tolerance_ms, u32 high_res) {
+    u32 tid = k_timer_set(pid, interval_ms, oneshot);
+    if (!tid) return (i32)ST_INSUFFICIENT_RES;
+    TIMERS[tid - 1u].dpc_id = dpc_id;
+    TIMERS[tid - 1u].tolerance = tolerance_ms;
+    TIMERS[tid - 1u].high_res = high_res ? 1u : 0u;
+    return (i32)tid;
+}
+i32 k_timer_set_tolerance(u32 tid, u32 tolerance_ms) {
+    if (tid < 1u || tid > MAX_TIMERS || !TIMERS[tid - 1u].used) return -1;
+    TIMERS[tid - 1u].tolerance = tolerance_ms;
+    return 0;
+}
+u32 k_timer_field(u32 tid, u32 field) {
+    Timer *t;
+    if (tid < 1u || tid > MAX_TIMERS || !TIMERS[tid - 1u].used) return 0;
+    t = &TIMERS[tid - 1u];
+    switch (field) {
+        case 0: return t->used;
+        case 1: return t->pid;
+        case 2: return t->interval;
+        case 3: return t->deadline;
+        case 4: return t->oneshot;
+        case 5: return t->dpc_id;
+        case 6: return t->tolerance;
+        case 7: return t->high_res;
+        case 8: return t->fires;
+        case 9: return t->coalesced;
+        default: return 0;
+    }
+}
 i32 k_timer_kill(u32 tid) {
     STATS[ST_SYSCALLS]++;
     if (tid < 1u || tid > MAX_TIMERS) return -1;
@@ -873,8 +907,13 @@ u32 k_tick(u32 now_ms) {
         Timer *t = &TIMERS[i];
         u32 catchup = 0;
         if (!t->used) continue;
-        while (t->deadline <= k_uptime) {
+        while (t->deadline <= k_uptime ||
+               (t->tolerance && t->deadline > k_uptime &&
+                t->deadline - k_uptime <= t->tolerance)) {
+            if (t->deadline > k_uptime) t->coalesced++;
             fired_push(t->tid);
+            t->fires++;
+            if (t->dpc_id) (void)k_dpc_queue(t->pid, (t->tid << 16) | (t->dpc_id & 0xFFFFu));
             STATS[ST_TIMERS]++;
             fired++;
             if (t->oneshot) { t->used = 0; break; }

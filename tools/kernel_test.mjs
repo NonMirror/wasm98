@@ -250,6 +250,22 @@ call('k_timer_kill', t1);
 ok(call('k_timer_count') === 0, 'timers killed');
 ok(call('k_tick', 500) === 0, 'tick with no due timers returns 0');
 
+/* ---- extended KTIMER semantics: DPC, high-resolution, coalescing -------- */
+const xt1 = call('k_timer_set_ex', p1, 100, 1, 7, 0, 1);
+const xt2 = call('k_timer_set_ex', p1, 105, 0, 8, 10, 1);
+ok(xt1 > 0 && xt2 > 0 && call('k_timer_field', xt2, 5) === 8 &&
+   call('k_timer_field', xt2, 7) === 1,
+   'extended timers retain DPC and high-resolution metadata');
+ok(call('k_timer_set_tolerance', xt2, 10) === 0 && call('k_timer_field', xt2, 6) === 10,
+   'timer coalescing tolerance is adjustable');
+const drainedBeforeTimers = k.k_dpc_drained();
+const xtFired = call('k_tick', 1100);
+ok(xtFired >= 2 && call('k_timer_field', xt2, 8) >= 1 && call('k_timer_field', xt2, 9) >= 1,
+   'neighboring expirations coalesce inside the tolerance window');
+ok(k.k_dpc_drained() >= drainedBeforeTimers + 2,
+   'timer DPCs drain during the same DISPATCH_LEVEL heartbeat');
+call('k_timer_kill', xt1); call('k_timer_kill', xt2);
+
 /* ---- 10. process teardown kills its timers ----------------------------- */
 call('k_timer_set', p3, 50, 0);
 call('k_timer_set', p3, 70, 0);
@@ -272,7 +288,7 @@ ok(fsStr.startsWith('KFS1'), 'fs blob is KFS1', fsStr.slice(0, 12));
 ok(fsStr.includes('persist.txt'), 'blob mentions the file');
 const regLen = call('k_reg_save');
 const regStr = tmp();
-ok(regLen > 10 && /^KREG[12]/.test(regStr), 'registry blob is a hive image (KREG1 legacy or KREG2)', regStr.slice(0, 12));
+ok(regLen > 10 && /^KREG[123]/.test(regStr), 'registry blob is a versioned hive image', regStr.slice(0, 12));
 
 // simulate a reboot
 k.k_init(0x1998);
@@ -319,6 +335,10 @@ function clip(s) { s = String(s); return s.length > 60 ? s.slice(0, 57) + '...' 
 function tmpClip() { return clip(tmp()); }
 function oidNamed(name, type, dacl) { const a = push(name); const r = k.k_obj_create(type, a.p, a.n, dacl); freed(a); return r; }
 function nameOf(id) { return read(k.k_obj_name_ptr(id), k.k_obj_name_len(id)); }
+function nsCreate(name, type, dacl = 0) { const a = push(name); const r = k.k_obj_create_named(type, a.p, a.n, dacl); freed(a); return r; }
+function nsOpen(name, type = 0) { const a = push(name); const r = k.k_obj_open_named(a.p, a.n, type); freed(a); return r; }
+function nsLink(name, target) { const a = push(name); const r = k.k_obj_link_named(a.p, a.n, target); freed(a); return r; }
+function nsRetarget(name, target) { const a = push(name); const r = k.k_obj_retarget_named(a.p, a.n, target); freed(a); return r; }
 function openKey(parent, path) {               // walk "A\B\C" with computed lengths
   let cur = parent;
   const segs = path.split('\\');
@@ -364,6 +384,34 @@ k.k_init(0x1998);
   ok(NS(0) >= NS(1) * 0 + 2 && NS(1) >= 2, 'object count and peak are tracked', [NS(0), NS(1)]);
 }
 {
+  const ns0 = k.k_obj_namespace_count();
+  const device = nsCreate('\\Device\\NamespaceDemo', 11);
+  ok(device > 0, 'named object creation returns an object', device);
+  ok(k.k_obj_namespace_count() === ns0 + 1, 'named object enters the namespace');
+  ok(U(nsCreate('\\device\\namespacedemo', 11)) === 0xC0000035, 'duplicate names return STATUS_OBJECT_NAME_COLLISION');
+  const opened = nsOpen('\\Device\\NamespaceDemo', 11);
+  ok(opened === device && k.k_obj_field(device, 2) === 2, 'named open is case-insensitive and references the object');
+  ok(k.k_obj_deref(opened) === 1, 'closing the named open releases its reference');
+  ok(U(nsOpen('\\Device\\Missing', 11)) === 0xC0000034, 'missing names return STATUS_OBJECT_NAME_NOT_FOUND');
+  const alias = nsLink('\\??\\NamespaceDemo', device);
+  ok(alias > 0, '\\?? alias creates a symbolic link');
+  const aliasTarget = nsOpen('\\GLOBAL??\\NamespaceDemo', 11);
+  ok(aliasTarget === device, '\\?? resolves through \\GLOBAL?? to the target');
+  k.k_obj_deref(aliasTarget);
+  ok(k.k_obj_deref(alias) === 0, 'symbolic link deletion releases its target reference');
+
+  const root = nsOpen('\\', 14);
+  const loopA = nsLink('\\BaseNamedObjects\\LoopA', root);
+  const loopB = nsLink('\\BaseNamedObjects\\LoopB', loopA);
+  ok(loopA > 0 && loopB > 0, 'symbolic links can target other links');
+  ok(nsRetarget('\\BaseNamedObjects\\LoopA', loopB) === loopA, 'symbolic link retargeting is explicit');
+  ok(U(nsOpen('\\BaseNamedObjects\\LoopA', 0)) === 0xC0000275, 'a symbolic-link loop returns STATUS_REPARSE');
+  const dropB = k.k_obj_deref(loopB), dropA = k.k_obj_deref(loopA), dropCycle = k.k_obj_deref(loopB);
+  ok(dropB === 1 && dropA === 1 && dropCycle === 0, 'loop links can be released without leaking the cycle', [dropB, dropA, dropCycle]);
+  k.k_obj_deref(root);
+  ok(k.k_obj_deref(device) === 0, 'the named target releases cleanly');
+}
+{
   const guarded = oidNamed('Guarded', 6, 1 /* ACCESS_READ only */);
   const nm = push('TestProc');
   const pid = k.k_process_create(nm.p, nm.n, 0);
@@ -382,7 +430,29 @@ k.k_init(0x1998);
   ok(dup > 0 && dup !== good, 'k_handle_dup duplicates a handle', dup);
   ok(k.k_handle_close(pid, dup) === 0, 'k_handle_close releases it');
   ok(k.k_handle_close(pid, dup) === -1, 'closing twice fails');
+  const stale = k.k_handle_open(pid, guarded, 1);
+  ok(stale > 0, 'a handle slot can be allocated for generation testing', stale);
+  ok(k.k_handle_close(pid, stale) === 0, 'generation test handle closes');
+  const fresh = k.k_handle_open(pid, guarded, 1);
+  ok(fresh > 0 && fresh !== stale, 'reusing a slot changes the handle generation', [stale, fresh]);
+  ok(k.k_handle_obj(pid, stale) === -1, 'a stale handle cannot resolve after reuse');
+  ok(k.k_handle_access(pid, stale) === 0, 'a stale handle has no access rights');
+  ok(k.k_handle_dup(pid, stale, 0) === -1, 'a stale handle cannot be duplicated');
+  ok(k.k_handle_close(pid, fresh) === 0, 'fresh generation closes normally');
   ok(k.k_handle_open(999, guarded, 1) === -1, 'opening from a bogus pid fails');
+  const objectBaseline = k.k_obj_count(), handleBaseline = k.k_handle_count(pid);
+  let loopOk = true;
+  for (let i = 0; i < 1000; i++) {
+    const loopObj = oidNamed('LoopObject', 6, 0);
+    const loopHandle = k.k_handle_open(pid, loopObj, 1);
+    if (!loopObj || loopHandle <= 0 || k.k_handle_close(pid, loopHandle) !== 0 || k.k_obj_deref(loopObj) !== 0) {
+      loopOk = false;
+      break;
+    }
+  }
+  ok(loopOk, '1000 object open/close iterations complete');
+  ok(k.k_obj_count() === objectBaseline, 'object count returns to its loop baseline', [objectBaseline, k.k_obj_count()]);
+  ok(k.k_handle_count(pid) === handleBaseline, 'handle count returns to its loop baseline', [handleBaseline, k.k_handle_count(pid)]);
   const tok = k.k_token_of(pid);
   ok(tok > 0, 'the process owns a token', tok);
   ok(k.k_sid_of(tok) === 1000, 'a normal user token carries SID 1000', k.k_sid_of(tok));
@@ -395,6 +465,131 @@ k.k_init(0x1998);
   ok(k.k_access_check(priv, adm, 1) === 0, 'a privileged token bypasses the DACL');
   ok(NS(29) >= 2 && NS(30) >= 3, 'tokens and access checks are counted', [NS(29), NS(30)]);
   k.k_token_set(pid, tok);
+}
+{
+  /* A descriptor with ordered SID ACEs follows SeAccessCheck's remaining-
+     rights algorithm. The two permutations prove that ACE order is visible. */
+  const user = k.k_token_create(1000, 0);
+  const userSid = k.k_sid_of(user);
+  const admin = k.k_token_create(2000, 0);
+  const system = k.k_token_create(3000, 0);
+  ok(k.k_token_set_privileges(user, 8) === 0,
+     'a token privilege can be enabled');
+  ok(k.k_token_has_privilege(user, 8) === 1 && k.k_privilege_check(user, 8) === 0,
+     'enabled privilege is visible to privilege checks');
+  ok(U(k.k_privilege_check(user, 16)) === 0xC0000061,
+     'a missing take-ownership privilege is refused');
+  ok(U(k.k_token_set_privileges(user, 0x80000000)) === 0xC000000D,
+     'unknown privilege bits are rejected');
+
+  const allowFirst = k.k_obj_create(6, 0, 0, 0x10000);
+  ok(k.k_obj_add_ace(allowFirst, 0xFFFFFFFF, 1, 0) === 0 &&
+     k.k_obj_add_ace(allowFirst, userSid, 1, 1) === 0,
+     'allow and deny ACEs can be appended');
+  ok(k.k_obj_ace_count(allowFirst) === 2, 'ACE count is exposed');
+  ok(k.k_access_check(user, allowFirst, 1) === 0,
+     'an allow ACE can satisfy access before a later deny');
+  const denyFirst = k.k_obj_create(6, 0, 0, 0x10000);
+  ok(k.k_obj_add_ace(denyFirst, userSid, 1, 1) === 0 &&
+     k.k_obj_add_ace(denyFirst, 0xFFFFFFFF, 1, 0) === 0,
+     'deny-first ACE order is retained');
+  ok(k.k_access_check(user, denyFirst, 1) === -5,
+     'an explicit deny before an allow wins');
+  ok(k.k_obj_add_ace(denyFirst, userSid, 2, 0) === 0 &&
+     k.k_access_check(user, denyFirst, 2) === 0,
+     'allow ACEs accumulate independent rights');
+  ok(U(k.k_obj_add_ace(denyFirst, userSid, 0x80, 0)) === 0xC000000D,
+     'ACE masks outside the security descriptor are rejected');
+
+  ok(k.k_obj_set_owner(denyFirst, 2000) === 0 && k.k_obj_owner(denyFirst) === 2000,
+     'owner SID is stored on the object');
+  ok(k.k_access_check(admin, denyFirst, 0x00060000) === 0,
+     'the owner receives READ_CONTROL and WRITE_DAC');
+  ok(k.k_obj_clear_aces(denyFirst) === 0 && k.k_obj_ace_count(denyFirst) === 0,
+     'clearing a DACL removes its ACEs');
+  ok(k.k_access_check(user, denyFirst, 1) === -5,
+     'an explicitly empty DACL denies access');
+
+  ok(k.k_token_set_privileges(system, 4) === 0 && k.k_access_check(system, oidNamed('SysOnlyAce', 6, 0x20000), 1) === 0,
+     'SYSTEM privilege satisfies a system-only descriptor');
+  ok(U(k.k_access_check(user, allowFirst, 0x01000000)) === 0xC0000061,
+     'ACCESS_SYSTEM_SECURITY requires SeSecurityPrivilege');
+  ok(U(k.k_obj_security_add_ace(user, allowFirst, userSid, 1, 1)) === 0xC0000022,
+     'a caller without WRITE_DAC cannot edit a descriptor');
+  ok(U(k.k_obj_security_add_ace(user, denyFirst, userSid, 1, 1)) === 0xC0000022,
+     'a non-owner without WRITE_DAC cannot edit a descriptor');
+  ok(k.k_token_set_privileges(system, 4 | 16) === 0 &&
+     k.k_obj_security_set_owner(system, denyFirst, 3000) === 0 &&
+     k.k_obj_owner(denyFirst) === 3000,
+     'SeTakeOwnership-style privilege changes the owner');
+
+  const audit0 = NS(51), audit1 = NS(52);
+  ok(k.k_token_set_privileges(system, 2 | 4) === 0 &&
+     k.k_obj_add_sacl_ace(system, allowFirst, userSid, 15, 4) === 0,
+     'a security token can install an audit ACE');
+  ok(k.k_access_check(user, allowFirst, 1) === 0 && NS(51) > audit0,
+     'successful access emits a success audit');
+  ok(k.k_access_check(user, allowFirst, 2) === -5 && NS(52) > audit1,
+     'failed access emits a failure audit');
+  ok(k.k_access_map_generic(0x80000000) === (1 | 0x20000),
+     'generic read maps to object and READ_CONTROL rights');
+  ok(k.k_token_set_privileges(user, 1) === 0 && k.k_access_check(user, denyFirst, 1) === 0,
+     'SeDebugPrivilege bypasses an explicit deny');
+  k.k_obj_deref(allowFirst); k.k_obj_deref(denyFirst);
+}
+{
+  const low = k.k_token_create(4000, 0);
+  const micObj = k.k_obj_create(6, 0, 0, 0x10000);
+  ok(k.k_token_integrity(low) === 1 && k.k_obj_integrity(micObj) === 2,
+     'Guest tokens are Low and new objects are Medium');
+  ok(k.k_access_check(low, micObj, 1) === 0,
+     'mandatory integrity permits read-up');
+  ok(k.k_access_check(low, micObj, 2) === -5,
+     'mandatory integrity refuses Low write-up despite a public DACL');
+  ok(k.k_token_set_integrity(low, 3) === 0 && k.k_access_check(low, micObj, 2) === 0,
+     'a High token can write a Medium object');
+  ok(k.k_obj_set_integrity(micObj, 1) === 0 && k.k_access_check(k.k_token_create(4000, 0), micObj, 2) === 0,
+     'lowering an object label permits a Low writer');
+  ok(U(k.k_token_set_integrity(low, 5)) === 0xC000000D &&
+     U(k.k_obj_set_integrity(micObj, 5)) === 0xC000000D,
+     'integrity levels outside System are rejected');
+  const highObj = k.k_obj_create(6, 0, 0, 0x10000);
+  ok(k.k_token_set_integrity(low, 1) === 0 && k.k_obj_set_integrity(highObj, 3) === 0 &&
+     U(k.k_obj_security_set_integrity(low, highObj, 1)) === 0xC0000022,
+     'a Low caller cannot lower a High object without WRITE_DAC');
+  const debugLow = k.k_token_create(1000, 0);
+  ok(k.k_token_set_integrity(debugLow, 1) === 0 && k.k_token_set_privileges(debugLow, 1) === 0 &&
+     k.k_access_check(debugLow, highObj, 2) === -5,
+     'SeDebugPrivilege does not bypass mandatory write-up');
+  k.k_obj_deref(micObj); k.k_obj_deref(highObj);
+}
+{
+  const plain = k.k_token_create(1000, 0);
+  const admin = k.k_token_create(2000, 0);
+  const system = k.k_token_create(3000, 0);
+  const pplObj = k.k_obj_create(1, 0, 0, 0x10000); // process-like object
+  ok(k.k_token_signer(plain) === 1 && k.k_token_signer(admin) === 2 &&
+     k.k_token_signer(system) === 5,
+     'tokens receive the expected PPL signer levels');
+  ok(k.k_obj_set_protection(pplObj, 5) === 0 && k.k_obj_protection(pplObj) === 5,
+     'a process can be marked PPL-Windows');
+  ok(k.k_access_check(plain, pplObj, 1) === 0,
+     'an unprotected caller can read a protected process');
+  ok(k.k_access_check(admin, pplObj, 2) === -5,
+     'an Administrator cannot obtain PROCESS_VM_WRITE on a higher signer');
+  ok(k.k_token_set_privileges(admin, 1) === 0 && k.k_access_check(admin, pplObj, 2) === -5,
+     'SeDebugPrivilege cannot bypass PPL signer protection');
+  ok(k.k_access_check(system, pplObj, 2) === 0,
+     'a Windows signer can write an equal-signer protected process');
+  ok(k.k_token_set_signer(plain, 5) === 0 && k.k_access_check(plain, pplObj, 2) === 0,
+     'raising a caller signer permits protected write access');
+  ok(U(k.k_token_set_signer(plain, 6)) === 0xC000000D &&
+     U(k.k_obj_set_protection(pplObj, 6)) === 0xC000000D,
+     'unknown signer levels are rejected');
+  ok(k.k_obj_security_set_protection(system, pplObj, 4) === 0 &&
+     k.k_obj_protection(pplObj) === 4,
+     'WRITE_DAC allows the security boundary to lower a protection level');
+  k.k_obj_deref(pplObj);
 }
 
 /* ---- threads, priorities, ready queues --------------------------------- */
@@ -420,6 +615,27 @@ k.k_init(0x1998);
   const weird = k.k_thread_create(pid, 99, wn.p, wn.n);
   freed(wn);
   ok(k.k_thread_field(weird, 2) === 31, 'an out-of-range priority is clamped', k.k_thread_field(weird, 2));
+  ok(k.k_thread_affinity(hi) === 15 && k.k_thread_set_affinity(hi, 2) === 0 &&
+     k.k_thread_set_ideal_processor(hi, 1) === 0 && k.k_thread_ideal_processor(hi) === 1,
+     'threads start all-CPU and accept a restricted ideal processor');
+  ok(k.k_cpu_ready_index(0, 24) === 0 && k.k_cpu_ready_index(1, 24) === hi,
+     'the per-CPU ready view honors affinity');
+  ok(U(k.k_thread_set_affinity(hi, 0)) === 0xC000000D &&
+     U(k.k_thread_set_ideal_processor(hi, 4)) === 0xC000000D,
+     'empty masks and out-of-range processors are refused');
+  ok(k.k_process_set_priority_class(pid, 4) === 0 && k.k_process_priority_class(pid) === 4 &&
+     U(k.k_process_set_priority_class(pid, 5)) === 0xC000000D,
+     'priority classes are bounded per process');
+  const an = push('affinity');
+  const aff = k.k_thread_create(pid, 31, an.p, an.n);
+  freed(an);
+  ok(k.k_thread_set_affinity(weird, 2) === 0 && k.k_thread_set_affinity(aff, 4) === 0 &&
+     k.k_scheduler_set_cpu(2) === 0 && k.k_tick(7500) >= 0 &&
+     k.k_thread_processor(aff) === 2,
+     'the tick picker runs the highest ready thread allowed on the selected CPU');
+  ok(U(k.k_scheduler_set_cpu(4)) === 0xC000000D && k.k_scheduler_cpu() === 2,
+     'the scheduler rejects an invalid logical CPU');
+  k.k_scheduler_set_cpu(0);
   /* a blocked thread comes back when its object is signalled */
   const ev = k.k_event_create(0, 0);
   ok(U(k.k_thread_wait(weird, ev, 0, 0)) === 0x8000000D, 'an unsignalled event blocks the thread');
@@ -513,6 +729,129 @@ k.k_init(0x1998);
   ok(NS(13) > d0, 'APC deliveries are counted', NS(13) - d0);
 }
 
+/* ---- WaitForMultipleObjects: any/all, APC/alert, timeout, abandonment -- */
+{
+  const mn = push('MultipleWaitHost');
+  const mpid = k.k_process_create(mn.p, mn.n, 0);
+  const mwName = push('multiple-waiter'), moName = push('multiple-owner');
+  const mw = k.k_thread_create(mpid, 18, mwName.p, mwName.n);
+  const mo = k.k_thread_create(mpid, 10, moName.p, moName.n);
+  freed(mn); freed(mwName); freed(moName);
+  const anyA = k.k_event_create(0, 0);
+  const anyB = k.k_event_create(1, 1);
+  const list = k.k_alloc(8);
+  new Uint32Array(k.memory.buffer, list, 2).set([anyA, anyB]);
+  ok(k.k_wait_multiple(mw, list, 2, 0, 0, 0) === 0 &&
+     k.k_wait_result(mw) === 0,
+     'wait-any returns immediately for a signalled object');
+  const allA = k.k_event_create(1, 0);
+  const allB = k.k_event_create(1, 0);
+  new Uint32Array(k.memory.buffer, list, 2).set([allA, allB]);
+  ok(U(k.k_wait_multiple(mw, list, 2, 1, 0, 0)) === 0x8000000D &&
+     k.k_thread_field(mw, 11) === 2,
+     'wait-all blocks and registers every object');
+  k.k_event_set(allA);
+  ok(k.k_thread_field(mw, 1) === 3, 'wait-all stays blocked until the last object signals');
+  k.k_event_set(allB);
+  ok(k.k_thread_field(mw, 1) === 1 && k.k_wait_result(mw) === 0,
+     'wait-all wakes atomically after all objects are ready');
+  const timedA = k.k_event_create(0, 0);
+  new Uint32Array(k.memory.buffer, list, 1).set([timedA]);
+  k.k_wait_multiple(mw, list, 1, 0, 250, 0);
+  for (let t = 9000; t <= 9400; t += 100) k.k_tick(t);
+  ok(k.k_wait_result(mw) === 0x102 && k.k_thread_field(mw, 1) === 1,
+     'wait-any timeout reports STATUS_TIMEOUT');
+  const alertA = k.k_event_create(0, 0);
+  new Uint32Array(k.memory.buffer, list, 1).set([alertA]);
+  k.k_wait_multiple(mw, list, 1, 0, 0, 1);
+  ok(U(k.k_thread_alert(mw)) === 0x101 && k.k_wait_result(mw) === 0x101,
+     'an alertable multiple wait returns STATUS_ALERTED');
+  const apA = k.k_event_create(0, 0);
+  new Uint32Array(k.memory.buffer, list, 1).set([apA]);
+  k.k_wait_multiple(mw, list, 1, 0, 0, 1);
+  k.k_apc_queue(mw, mpid, 0x55, 1);
+  k.k_tick(9500);
+  ok(k.k_wait_result(mw) === 0xC0 && k.k_thread_field(mw, 1) === 1,
+     'an alertable multiple wait returns STATUS_USER_APC');
+  const abandoned = k.k_mutant_create(mo);
+  new Uint32Array(k.memory.buffer, list, 1).set([abandoned]);
+  k.k_wait_multiple(mw, list, 1, 0, 0, 0);
+  ok(k.k_thread_terminate(mo) === 0 && k.k_wait_result(mw) === 0x80,
+     'terminating a mutant owner wakes the next waiter as STATUS_ABANDONED');
+  ok(U(k.k_wait_multiple(mw, list, 9, 0, 0, 0)) === 0xC000000D,
+     'more than eight wait objects is refused');
+  k.k_free(list);
+}
+
+/* ---- executive locks and IRQL contracts -------------------------------- */
+{
+  const ln = push('LockHost');
+  const lpid = k.k_process_create(ln.p, ln.n, 0);
+  const l1n = push('lock-one'), l2n = push('lock-two');
+  const l1 = k.k_thread_create(lpid, 12, l1n.p, l1n.n);
+  const l2 = k.k_thread_create(lpid, 12, l2n.p, l2n.n);
+  freed(ln); freed(l1n); freed(l2n);
+  const spin = k.k_spinlock_create();
+  ok(spin > 0 && k.k_spinlock_acquire(spin, l1) === 0 && k.k_irql() === 2,
+     'spinlock acquisition raises IRQL to DISPATCH');
+  ok(U(k.k_spinlock_acquire(spin, l1)) === 0xC00000A7,
+     'recursive spinlock acquisition is refused');
+  ok(U(k.k_spinlock_acquire(spin, l2)) === 0xC0000708,
+     'a held spinlock refuses a competing owner');
+  ok(U(k.k_spinlock_release(spin, l2)) === 0xC0000022 &&
+     k.k_spinlock_release(spin, l1) === 0 && k.k_irql() === 0,
+     'only the owner can release and IRQL is restored');
+  const queued = k.k_lock_create(2);
+  ok(k.k_lock_acquire(queued, l1, 1) === 0 && k.k_lock_release(queued, l1, 1) === 0,
+     'queued spinlocks use the same exclusive contract');
+
+  const pushLock = k.k_pushlock_create();
+  ok(k.k_pushlock_acquire(pushLock, l1, 0) === 0 && k.k_pushlock_acquire(pushLock, l2, 0) === 0,
+     'pushlocks admit concurrent shared owners');
+  ok(U(k.k_pushlock_acquire(pushLock, l1, 1)) === 0xC0000708,
+     'pushlock exclusive acquisition waits behind shared owners');
+  ok(k.k_pushlock_release(pushLock, l1, 0) === 0 && k.k_pushlock_release(pushLock, l2, 0) === 0 &&
+     k.k_pushlock_acquire(pushLock, l1, 1) === 0,
+     'pushlock becomes exclusive after shared release');
+  ok(k.k_pushlock_acquire(pushLock, l1, 1) === 0 && k.k_lock_field(pushLock, 4) === 2,
+     'pushlock exclusive acquisition is recursive');
+  ok(k.k_pushlock_release(pushLock, l1, 1) === 0 && k.k_pushlock_release(pushLock, l1, 1) === 0,
+     'recursive pushlock releases balance');
+  const resource = k.k_lock_create(3);
+  ok(k.k_lock_acquire(resource, l1, 0) === 0 && k.k_lock_acquire(resource, l2, 0) === 0 &&
+     k.k_lock_release(resource, l1, 0) === 0 && k.k_lock_release(resource, l2, 0) === 0,
+     'ERESOURCE shared mode balances per-reader releases');
+  const fast = k.k_lock_create(5), guarded = k.k_lock_create(6);
+  ok(k.k_lock_acquire(fast, l1, 1) === 0 && k.k_irql() === 1 &&
+     k.k_lock_release(fast, l1, 1) === 0 && k.k_irql() === 0,
+     'fast mutex raises and restores APC_LEVEL');
+  k.k_irql_raise(2);
+  ok(U(k.k_lock_acquire(guarded, l1, 1)) === 0xC0000010 &&
+     U(k.k_lock_acquire(pushLock, l1, 0)) === 0xC0000010,
+     'guarded mutex and pushlock refuse an invalid IRQL');
+  k.k_irql_lower(0);
+  ok(U(k.k_lock_create(99)) === 0xC000000D && k.k_lock_field(spin, 5) >= 2,
+     'invalid lock kinds are rejected and refusals are counted');
+}
+
+/* ---- work items / system worker PASSIVE_LEVEL contract ----------------- */
+{
+  const w0 = k.k_work_pending();
+  const wi1 = k.k_work_queue(1, 0x1234);
+  k.k_irql_raise(2);
+  const wi2 = k.k_work_queue(2, 0x5678);
+  ok(wi1 > 0 && wi2 > 0 && k.k_work_pending() === w0 + 2,
+     'work items can be queued from PASSIVE and DISPATCH');
+  ok(U(k.k_work_drain()) === 0xC0000010,
+     'a system worker cannot run at DISPATCH_LEVEL');
+  k.k_irql_lower(0);
+  ok(k.k_work_drain() === 2 && k.k_work_pending() === w0,
+     'the worker drains each queued item at PASSIVE_LEVEL');
+  ok(k.k_work_field(wi1, 1) === 1 && k.k_work_field(wi1, 2) === 0x1234 &&
+     k.k_work_field(wi1, 3) === 0 && k.k_work_field(wi1, 4) === 1,
+     'completed work records its process, payload, IRQL, and run count');
+}
+
 /* ---- DPCs and the executive heartbeat ---------------------------------- */
 {
   const d0 = k.k_dpc_drained(), q0 = NS(10);
@@ -583,6 +922,114 @@ k.k_init(0x1998);
   ok(k.k_io_counts(5) >= 1, 'queued IRPs are counted', k.k_io_counts(5));
 }
 
+/* ---- I/O completion ports and cancel-safe pending IRPs ----------------- */
+{
+  const iocpDev = 3, iocpVmbus = 1;
+  const port = k.k_iocp_create(2);
+  ok(port > 0 && k.k_iocp_associate(port, iocpDev, 0xCAFE) === 0,
+     'an I/O completion port associates a device');
+  const asyncIrp = k.k_irp_create(iocpDev, 0x03, 0, 0, 128);
+  ok(k.k_irp_associate_completion(asyncIrp, port, 0x1234) === 0 &&
+     U(k.k_io_mark_pending(asyncIrp)) === 0xC0000016,
+     'an IRP can be marked pending and associated with a completion key');
+  ok(k.k_io_complete(asyncIrp, 0, 77) === 0,
+     'a pending IRP completes successfully');
+  const packet = k.k_iocp_get(port, 0);
+  ok(packet > 0 && k.k_iocp_packet_field(packet, 0) === port &&
+     k.k_iocp_packet_field(packet, 1) === 0x1234 &&
+     k.k_iocp_packet_field(packet, 2) === 77 && k.k_iocp_packet_field(packet, 4) === asyncIrp,
+     'completion packet carries the key, bytes, and IRP');
+  ok(k.k_iocp_field(port, 2) === 1 && U(k.k_iocp_get(port, 0)) === 0x102,
+     'an empty completion port reports STATUS_TIMEOUT');
+  ok(k.k_io_complete(asyncIrp, 0xC0000010, 0) === 0,
+     'repeated completion does not post a second packet');
+  const wrongPort = k.k_iocp_create(1);
+  ok(k.k_iocp_associate(wrongPort, iocpVmbus, 7) === 0 &&
+     U(k.k_irp_associate_completion(asyncIrp, wrongPort, 7)) === 0xC000000D,
+     'a completion association rejects a mismatched device');
+  const cancelled = k.k_irp_create(iocpDev, 0x03, 0, 0, 0);
+  k.k_irp_associate_completion(cancelled, port, 0x99);
+  k.k_io_mark_pending(cancelled);
+  ok(k.k_io_cancel(cancelled) === 0 && U(k.k_io_cancel(cancelled)) === 0xC0000010,
+     'cancel completes a pending IRP exactly once');
+  const cancelPacket = k.k_iocp_get(port, 0);
+  ok(cancelPacket > 0 && U(k.k_iocp_packet_field(cancelPacket, 3)) === 0xC0000010 &&
+     k.k_iocp_field(port, 1) === 2,
+     'the cancellation packet is delivered once');
+}
+
+/* ---- ALPC connect/send/receive/reply and close semantics ---------------- */
+{
+  const server = k.k_alpc_create(1, 4);
+  const client = k.k_alpc_create(2, 4);
+  const alpcToken = k.k_token_create(1000, 0);
+  ok(server > 0 && client > 0 && k.k_alpc_connect(client, server) === 0 &&
+     k.k_alpc_field(server, 2) === 1 && k.k_alpc_field(client, 1) === server,
+     'ALPC ports connect a client to a server');
+  const payload = push('hello ALPC');
+  const request = k.k_alpc_send(client, alpcToken, payload.p, payload.n, 77);
+  freed(payload);
+  ok(request > 0 && k.k_alpc_field(client, 5) === 1,
+     'a client send queues one message on its peer');
+  const received = k.k_alpc_receive(server, 0);
+  ok(received > 0 && k.k_alpc_message_field(received, 0) === client &&
+     k.k_alpc_message_field(received, 1) === alpcToken &&
+     k.k_alpc_message_field(received, 2) === 10 &&
+     k.k_alpc_message_field(received, 3) === 77 &&
+     read(k.k_alpc_message_field(received, 6), 10) === 'hello ALPC',
+     'the server sees the client token, section view, and payload');
+  const reply = k.k_alpc_reply(server, received, 0x123);
+  ok(reply > 0 && U(k.k_alpc_message_field(reply, 5)) === 0x123 &&
+     k.k_alpc_message_field(reply, 4) === received,
+     'the server can reply to exactly one request');
+  ok(U(k.k_alpc_reply(server, received, 0x456)) === 0xC000000D,
+     'a request cannot be replied to twice');
+  const response = k.k_alpc_receive(client, 0);
+  ok(response === reply && k.k_alpc_field(client, 6) === 1,
+     'the client receives the reply message');
+  ok(U(k.k_alpc_receive(client, 0)) === 0x102,
+     'an empty connected port reports STATUS_TIMEOUT');
+  ok(k.k_alpc_message_release(received) === 0 && k.k_alpc_message_release(response) === 0,
+     'ALPC messages can be released after processing');
+  const closed = k.k_alpc_close(server);
+  ok(closed === 0 && U(k.k_alpc_send(client, alpcToken, 0, 0, 0)) === 0xC0000037 &&
+     U(k.k_alpc_receive(server, 0)) === 0xC0000037,
+     'closing a port fails new sends and pending receives');
+  const s2 = k.k_alpc_create(3, 1), c2 = k.k_alpc_create(4, 1);
+  ok(k.k_alpc_accept(s2, c2) === 0 && k.k_alpc_send(c2, alpcToken, 0, 0, 0) > 0,
+     'the server-side accept path establishes a second channel');
+  ok(U(k.k_alpc_send(c2, alpcToken, 0, 0, 0)) === 0xC000009A,
+     'a full ALPC message queue refuses another send');
+}
+
+/* ---- PnP device-node and power IRP state machine ----------------------- */
+{
+  const dn = push('\\Device\\PnpDemo');
+  const pnpDev = k.k_device_create(3, dn.p, dn.n, 2);
+  freed(dn);
+  ok(pnpDev > 0 && k.k_pnp_field(pnpDev, 0) === 0 && k.k_pnp_field(pnpDev, 1) === 3,
+     'new device nodes start Added and powered down');
+  ok(U(k.k_pnp_set_power(pnpDev, 0)) === 0xC0000010 && k.k_pnp_start(pnpDev) === 0 &&
+     k.k_pnp_field(pnpDev, 0) === 1 && k.k_pnp_field(pnpDev, 1) === 0,
+     'START_DEVICE transitions the node to D0');
+  ok(k.k_pnp_set_power(pnpDev, 2) === 0 && k.k_pnp_field(pnpDev, 1) === 2,
+     'power IRPs can move a started node to D2');
+  ok(k.k_device_open(pnpDev) === 0 && k.k_pnp_field(pnpDev, 2) === 1 &&
+     U(k.k_pnp_query_remove(pnpDev)) === 0xC000009E,
+     'QUERY_REMOVE is refused while a device handle is open');
+  ok(k.k_device_close(pnpDev) === 0 && k.k_pnp_query_remove(pnpDev) === 0 &&
+     k.k_pnp_cancel_remove(pnpDev) === 0,
+     'closing the handle permits and then cancels QUERY_REMOVE');
+  ok(k.k_pnp_query_remove(pnpDev) === 0 && k.k_pnp_remove(pnpDev) === 0 &&
+     k.k_pnp_field(pnpDev, 0) === 3 && k.k_pnp_field(pnpDev, 1) === 3,
+     'REMOVE commits the node to the Removed/D3 state');
+  ok(U(k.k_device_open(pnpDev)) === 0xC0000056,
+     'removed devices reject new handles');
+  const removedIrp = k.k_irp_create(pnpDev, 3, 0, 0, 0);
+  ok(U(k.k_io_call_driver(removedIrp)) === 0xC0000056,
+     'IRPs sent after REMOVE return STATUS_DELETE_PENDING');
+}
+
 /* ---- memory manager: VAD-style regions, commit, sections, pool --------- */
 {
   const nm = push('VmHost');
@@ -631,6 +1078,40 @@ k.k_init(0x1998);
   ok(k.k_section_field(sec, 3) === 2, 'two mappings are recorded', k.k_section_field(sec, 3));
   ok(k.k_section_field(sec, 2) >= 3, 'mapping takes a reference on the section', k.k_section_field(sec, 2));
   ok(NS(38) >= 1, 'sections are counted', NS(38));
+  const cow = k.k_section_create_ex(8192, 3, 1);
+  const vc = k.k_vm_reserve(pid, 8192, 3);
+  const vd = k.k_vm_reserve(pidB, 8192, 3);
+  ok(cow > 0 && k.k_section_field(cow, 4) === 1 && k.k_section_map(pid, cow, vc) === 0 &&
+     k.k_section_map(pidB, cow, vd) === 0,
+     'copy-on-write sections map into two processes');
+  ok(k.k_vm_cow_write(pid, vc) === 0 && k.k_section_field(cow, 5) === 1 &&
+     k.k_vm_cow_write(pid, vc) === 0 && k.k_section_field(cow, 5) === 1,
+     'the first COW write faults privately and later writes reuse the copy');
+  ok(U(k.k_vm_cow_write(pid, va)) === 0xC0000022,
+     'a non-COW shared section refuses a private write fault');
+  const large = k.k_vm_reserve_large(pid, 2 * 1024 * 1024, 3);
+  ok(large > 0 && large % (2 * 1024 * 1024) === 0 && k.k_vm_region_field(pid, large, 0) === 1 &&
+     k.k_vm_reserve_large(pid, 4096, 3) < 0,
+     'large-page VADs require 2 MiB alignment and carry a large-page marker');
+  const paged = v2;
+  ok(k.k_mm_pageout(pid, paged) === 0 && k.k_vm_region_field(pid, paged, 1) === 1 &&
+     k.k_mm_pagefile_field(0) >= 1 && k.k_mm_pfn_field(3) >= 1 &&
+     U(k.k_mm_pageout(pid, paged)) === 0xC000000D,
+     'page-out moves an active frame to the bounded modified page-file list');
+  ok(k.k_mm_pagein(pid, paged) === 0 && k.k_vm_region_field(pid, paged, 1) === 0 &&
+     k.k_mm_pagefile_field(2) >= 1 && U(k.k_mm_pagein(pid, paged)) === 0xC000000D,
+     'page-in restores the frame and refuses a duplicate page-in');
+  const proto = k.k_section_create_ex(4096, 3, 0);
+  const protoVa = k.k_vm_reserve(pid, 4096, 3);
+  ok(proto > 0 && k.k_section_set_prototype(proto, 1) === 0 && k.k_section_map(pid, proto, protoVa) === 0 &&
+     k.k_vm_region_field(pid, protoVa, 2) === 1 && k.k_vm_prototype_fault(pid, protoVa) === 0 &&
+     k.k_section_field(proto, 7) === 1 && k.k_vm_prototype_fault(pid, protoVa) === 0,
+     'prototype PTE sections materialise one shared fault frame and reuse it');
+  const standby0 = k.k_mm_pfn_field(2);
+  ok(k.k_mm_trim(pid, 1) >= 1 && k.k_mm_pfn_field(2) > standby0,
+     'working-set trimming moves active frames to standby');
+  ok(k.k_mm_reclaim(1) >= 1 && k.k_mm_pfn_field(0) > 0,
+     'standby reclamation returns frames to the free list');
   /* pool: paged pool is refused at raised IRQL */
   const p1 = k.k_pool_alloc(4096, 1, 0x4162);
   ok(p1 !== 0, 'paged pool allocation works at PASSIVE_LEVEL');
@@ -644,11 +1125,159 @@ k.k_init(0x1998);
   ok(k.k_pool_field(2) >= 4096, 'nonpaged pool usage is tracked', k.k_pool_field(2));
   ok(k.k_pool_field(1) > 0 && k.k_pool_field(3) > 0, 'pool peaks are tracked',
      [k.k_pool_field(1), k.k_pool_field(3)]);
+  const quota0 = k.k_pool_field(6);
+  ok(k.k_pool_set_quota(pid, 8192) === 0 && k.k_pool_quota(pid) === 8192,
+     'a process pool quota is configurable');
+  const qpool = k.k_pool_alloc_for(pid, 4096, 0, 0x80004162);
+  ok(qpool > 0 && k.k_pool_is_nx(qpool) === 1 && k.k_pool_charge(pid) >= 4096,
+     'tagged pool allocations can be marked POOL_NX and charged to a PID');
+  ok(k.k_pool_alloc_for(pid, 4096, 0, 0x4162) === 0 && k.k_pool_field(6) > quota0,
+     'a pool quota refuses the next allocation');
+  ok(U(k.k_pool_free(qpool, 0x4162)) === 0xC00000C2 && k.k_pool_set_nx(qpool, 0) === 0 &&
+     k.k_pool_free(qpool, 0x80004162) === 0 && U(k.k_pool_free(qpool, 0x80004162)) === 0xC00000C2,
+     'bad tags, correct frees, and double frees are distinguished');
+  /* segment heap: bounded segments, first-fit splits, coalescing and quota
+     refusal are separate from the legacy tagged-pool arena. */
+  const seg = k.k_segment_heap_create(pid, 64 * 1024, 192 * 1024, 0x12);
+  ok(seg > 0 && k.k_segment_heap_field(seg, 1) === 64 * 1024 &&
+     k.k_segment_heap_field(seg, 2) === 192 * 1024 && k.k_segment_heap_field(seg, 10) === 0x12,
+     'a segment heap records its initial, maximum, and policy fields');
+  const sa = k.k_segment_heap_alloc(seg, 1024, 0x53454741);
+  const sb = k.k_segment_heap_alloc(seg, 2048, 0x53454742);
+  ok(sa > 0 && sb > 0 && k.k_segment_heap_field(seg, 4) >= 3072 &&
+     k.k_segment_heap_field(seg, 5) === 2,
+     'segment allocations split a free range and charge committed bytes');
+  ok(U(k.k_segment_heap_free(sb, 0xBAD0)) === 0xC00000C2 &&
+     k.k_segment_heap_field(seg, 5) === 2,
+     'a segment tag mismatch refuses to release a live block');
+  ok(k.k_segment_heap_free(sa, 0x53454741) === 0 &&
+     k.k_segment_heap_alloc(seg, 512, 0x53454743) === sa,
+     'a freed segment block is reused by first-fit allocation');
+  const sg = k.k_segment_heap_alloc(seg, 70 * 1024, 0x53454747);
+  ok(sg > 0 && k.k_segment_heap_field(seg, 3) > 64 * 1024 &&
+     k.k_segment_heap_field(seg, 8) >= 2,
+     'an allocation larger than the initial segment grows the heap');
+  ok(k.k_segment_heap_alloc(seg, 100 * 1024, 0x5345474D) === 0 &&
+     k.k_segment_heap_field(seg, 9) > 0,
+     'segment growth stops at the configured maximum');
+  ok(U(k.k_segment_heap_destroy(seg)) === 0xC0000708,
+     'destroying a heap with live allocations is refused');
+  ok(k.k_segment_heap_free(seg ? sa : 0, 0x53454743) === 0 &&
+     k.k_segment_heap_free(sb, 0x53454742) === 0 &&
+     k.k_segment_heap_free(sg, 0x53454747) === 0 &&
+     U(k.k_segment_heap_free(sg, 0x53454747)) === 0xC00000C2 &&
+     k.k_segment_heap_destroy(seg) === 0 && k.k_segment_heap_field(seg, 11) === 1,
+     'coalesced segment blocks release cleanly and close the heap');
   /* terminating a process releases its address space and handles */
   const r0 = NS(39);
   ok(k.k_process_terminate(pidB) === 0, 'a process can be terminated', k.k_process_terminate(pidB));
   ok(NS(39) < r0, 'its VM regions are released', [r0, NS(39)]);
   ok(k.k_vm_field(pidB, 1) === 0, 'its commit is gone', k.k_vm_field(pidB, 1));
+}
+
+/* ---- job limits, membership, and kill-on-close -------------------------- */
+{
+  const jn = push('JobHost');
+  const jpid = k.k_process_create(jn.p, jn.n, 0);
+  freed(jn);
+  const job = k.k_job_create(0, 128 * 1024, 0, 1);
+  const baseJobCharge = k.k_job_field(job, 3);
+  ok(job > 0 && k.k_job_field(job, 5) === 1 && k.k_job_assign(job, jpid) === 0 &&
+     k.k_job_field(job, 1) === 1 && k.k_job_field(job, 3) >= baseJobCharge,
+     'a silo job accepts a process and accounts existing commit');
+  const jLimit = k.k_job_set_limit(job, baseJobCharge + 4096);
+  const jCommit = k.k_vm_commit(jpid, k.k_vm_region_vaddr(jpid, 0), 8192);
+  ok(jLimit === 0 && U(jCommit) === 0xC0000411,
+     'a job memory limit refuses a commit before global accounting');
+  ok(k.k_job_close(job) === 0 && k.k_job_field(job, 6) === 1 &&
+     k.k_job_field(job, 1) === 0 && k.k_proc_count() > 0,
+     'closing a non-kill job detaches members without terminating them');
+  const kn = push('KillJobHost');
+  const kpid = k.k_process_create(kn.p, kn.n, 0);
+  freed(kn);
+  const killJob = k.k_job_create(0, 0, 1, 0);
+  const procBeforeKill = k.k_proc_count();
+  ok(k.k_job_assign(killJob, kpid) === 0 && k.k_job_close(killJob) === 0 &&
+     k.k_proc_count() === procBeforeKill - 1 && k.k_proc_name_ptr(kpid) === 0,
+     'kill-on-close terminates every member');
+  ok(U(k.k_job_assign(job, jpid)) === 0xC000000D,
+     'a closed job rejects new assignments');
+}
+
+/* ---- ETW providers, sessions and loss accounting ---------------------- */
+{
+  const pn = push('W98-TestProvider');
+  const provider = k.k_etw_register_provider(pn.p, pn.n);
+  freed(pn);
+  const sn = push('KernelTrace');
+  const session = k.k_etw_start_session(sn.p, sn.n, 4);
+  freed(sn);
+  ok(provider > 0 && session > 0, 'an ETW provider and session can start');
+  ok(k.k_etw_enable_provider(session, provider, 4, 1) === 0,
+     'a session enables a provider with level and keyword filters');
+  ok(U(k.k_etw_enable_provider(session, 999, 4, 1)) === 0xC0000034,
+     'enabling an unknown ETW provider is refused');
+  const ep = push('payload');
+  ok(k.k_etw_write(provider, 42, 4, 1, ep.p, ep.n, 77) === 0,
+     'an enabled provider writes an event');
+  freed(ep);
+  const filtered = push('filtered');
+  ok(k.k_etw_write(provider, 43, 5, 1, filtered.p, filtered.n, 77) === 0,
+     'a filtered event is accepted without entering the session');
+  freed(filtered);
+  ok(k.k_etw_drain(session, 1) === 1 && k.k_etw_event_field(session, 1) === 42 &&
+     k.k_etw_event_field(session, 4) === 77 && k.k_etw_event_ptr() > 0 && tmp() === 'payload',
+     'draining publishes event metadata and payload');
+  const sched = push('W98-Scheduler'), io = push('W98-Io'), mm = push('W98-Mm');
+  const schedP = k.k_etw_register_provider(sched.p, sched.n);
+  const ioP = k.k_etw_register_provider(io.p, io.n);
+  const mmP = k.k_etw_register_provider(mm.p, mm.n);
+  freed(sched); freed(io); freed(mm);
+  ok(schedP > 0 && ioP > 0 && mmP > 0 &&
+     k.k_etw_enable_provider(session, schedP, 4, 1) === 0 &&
+     k.k_etw_enable_provider(session, ioP, 4, 1) === 0 &&
+     k.k_etw_enable_provider(session, mmP, 4, 1) === 0,
+     'the scheduler, I/O, and memory providers can be enabled');
+  k.k_tick(12000);
+  ok(k.k_etw_drain(session, 8) >= 1 && k.k_etw_event_field(session, 0) === schedP,
+     'scheduler activity lands in the ETW session');
+  for (let i = 0; i < 8; i++) k.k_etw_write(provider, 100 + i, 4, 1, 0, 0, i);
+  ok(k.k_etw_event_field(session, 7) > 0, 'a full ETW ring accounts for dropped events', k.k_etw_event_field(session, 7));
+  ok(k.k_etw_drain(session, 64) > 0 && k.k_etw_event_field(session, 8) === 0,
+     'the session drains and returns to an empty ring');
+}
+
+/* ---- Driver Verifier and PatchGuard ------------------------------------ */
+{
+  const vdrv = 1; // seeded Vmbus driver
+  ok(k.k_verifier_enable(vdrv, 1 | 2 | 4 | 8) === 0 &&
+     k.k_verifier_field(vdrv, 0) === 15,
+     'driver verifier enables the requested rules');
+  ok(U(k.k_verifier_check(vdrv, 1, 0xAA, 2, 3, 4)) === 0xD1 &&
+     U(k.k_bugcheck_state(0)) === 0xD1 && k.k_verifier_field(vdrv, 1) === 1,
+     'an IRQL rule produces DRIVER_IRQL_NOT_LESS_OR_EQUAL with parameters');
+  ok(k.k_verifier_field(vdrv, 3) === 0xAA && k.k_verifier_field(vdrv, 6) === 4,
+     'verifier preserves all four violation parameters');
+  k.k_init(0x1998);
+  ok(k.k_verifier_enable(vdrv, 2) === 0 &&
+     U(k.k_verifier_check(vdrv, 2, 1, 2, 3, 4)) === 0xC4 &&
+     U(k.k_bugcheck_state(0)) === 0xC4,
+     'pool violations produce DRIVER_VERIFIER_DETECTED_VIOLATION');
+  k.k_init(0x1998);
+  ok(k.k_verifier_enable(vdrv, 8) === 0 &&
+     U(k.k_verifier_check(vdrv, 8, 5, 6, 7, 8)) === 0x1E &&
+     U(k.k_bugcheck_state(0)) === 0x1E,
+     'handle violations produce KMODE_EXCEPTION');
+  k.k_init(0x1998);
+  ok(k.k_patchguard_enable(10) === 0 && k.k_patchguard_field(0) === 1 &&
+     k.k_patchguard_tick(5) === 0 && k.k_patchguard_field(1) === 0,
+     'PatchGuard waits for its deterministic check interval');
+  ok(k.k_patchguard_tick(10) === 0 && k.k_patchguard_field(1) === 1,
+     'PatchGuard hashes the critical tables periodically');
+  ok(k.k_patchguard_corrupt(vdrv, 99) === 0 &&
+     U(k.k_patchguard_tick(20)) === 0x109 && U(k.k_bugcheck_state(0)) === 0x109,
+     'a modified dispatch table triggers CRITICAL_STRUCTURE_CORRUPTION');
+  k.k_init(0x1998);
 }
 
 /* ---- the registry hive ------------------------------------------------- */
@@ -706,6 +1335,35 @@ k.k_init(0x1998);
   ok(k.k_reg2_key_field(testKey, 1) === 1 && k.k_reg2_key_field(testKey, 2) === 4,
      'the key counts its subkeys and values',
      [k.k_reg2_key_field(testKey, 1), k.k_reg2_key_field(testKey, 2)]);
+  ok(k.k_reg2_cell_field(testKey, 0) >= 0x1000 &&
+     k.k_reg2_cell_field(testKey, 1) % 0x1000 === 0 &&
+     k.k_reg2_cell_field(testKey, 2) >= 64,
+     'keys expose stable hive cell and bin metadata',
+     [k.k_reg2_cell_field(testKey, 0), k.k_reg2_cell_field(testKey, 1), k.k_reg2_cell_field(testKey, 2)]);
+  const linkName = push('HiveAlias');
+  ok(k.k_reg2_link_key(hkcu, linkName.p, linkName.n, vmbusKey) > 0,
+     'a registry symbolic key is created');
+  freed(linkName);
+  const alias = openKey(hkcu, 'HiveAlias');
+  ok(alias === vmbusKey && getKeyValue(alias, 'Type') === 4,
+     'a symbolic key resolves to its target');
+  const linkName2 = push('HiveAlias');
+  ok(U(k.k_reg2_link_key(hkcu, linkName2.p, linkName2.n, vmbusKey)) === 0xC0000035,
+     'a duplicate symbolic key is refused');
+  freed(linkName2);
+  const appName = push('CalcApp');
+  const app = k.k_reg2_create_app_hive(appName.p, appName.n);
+  freed(appName);
+  ok(app > 0 && k.k_reg2_app_hive_root(app) > 0 && k.k_reg2_app_hive_field(app, 1) === 1,
+     'an application hive has a versioned root', app);
+  const appRoot = k.k_reg2_app_hive_root(app);
+  const appKeyName = push('Settings');
+  const appKey = k.k_reg2_create_key(appRoot, appKeyName.p, appKeyName.n);
+  freed(appKeyName);
+  ok(appKey > 0 && k.k_reg2_app_hive_field(app, 2) >= 2,
+     'application hive cells are charged as keys are created');
+  ok(setStr(appKey, 'Theme', 'dark') === 0 && getKeyValue(appKey, 'Theme') === 4 && tmp() === 'dark',
+     'application hive values round trip');
   /* deleting a key with children is refused, exactly like RegDeleteKey */
   ok(U(k.k_reg2_delete_key(testKey)) === 0xC00000F0, 'deleting a key with subkeys is refused',
      U(k.k_reg2_delete_key(testKey)).toString(16));
@@ -748,7 +1406,8 @@ k.k_init(0x1998);
      tmpClip());
   /* the hive survives a save/load round trip */
   const blob = k.k_reg_save();
-  ok(blob > 100, 'the hive serialises', blob);
+  ok(blob > 100, 'the versioned hive serialises', blob);
+  ok(tmp().indexOf('@APP\tCalcApp\t1') >= 0, 'application hive metadata is included in the snapshot');
   const blobCopy = read(k.k_tmp_ptr(), blob).slice();
   const before2 = k.k_reg2_stats(1);
   ok(k.k_reg_load.apply(null, (() => { const a = push(blobCopy); const p = a.p, n = a.n; return [p, n]; })()) > 0,
