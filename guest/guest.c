@@ -814,6 +814,28 @@ void guest_checkpoint_restore(u32 part, u32 stage, u32 heartbeat) {
     GS[slot].heartbeat = heartbeat;
     GS[slot].halted = 0u;
 }
+
+/* Management checkpoint helpers.  They deliberately expose only a bounded
+   byte copy of the staged guest state; all GPA memory (including the
+   framebuffer) is serialized by hypervisor/hv.c through the SLAT. */
+u32 guest_state_size(void) { return (u32)sizeof(GState); }
+u32 guest_state_save(u32 part, u32 dst, u32 max) {
+    u32 slot = guest_slot(part);
+    if (slot >= MAX_PARTS || !dst || max < (u32)sizeof(GState)) return 0u;
+    smemcpy((char *)dst, (const char *)&GS[slot], (u32)sizeof(GState));
+    return (u32)sizeof(GState);
+}
+u32 guest_state_load(u32 part, u32 src, u32 len, u32 vp, u32 channel) {
+    u32 slot = guest_slot(part);
+    GState *g;
+    if (slot >= MAX_PARTS || !src || len != (u32)sizeof(GState)) return 0u;
+    g = &GS[slot];
+    smemcpy((char *)g, (const char *)src, len);
+    g->part = part;
+    g->vp = vp;
+    if (channel) g->vmbus_chid = channel;
+    return len;
+}
 u32 guest_field(u32 part, u32 f);
 u32 guest_field(u32 part, u32 f) {
     GState *g;

@@ -154,6 +154,31 @@
     api.stopPartition = function (id) { return call(function () { return hv.stop(id); }, -1); };
     api.resetPartition = function (id) { return call(function () { return hv.reset(id); }, -1); };
     api.deletePartition = function (id) { return call(function () { return hv.remove(id); }, -1); };
+    api.checkpoints = function () { return call(function () {
+      return typeof hv.checkpoints === 'function' ? hv.checkpoints() : [];
+    }, []) || []; };
+    api.checkpointList = api.checkpoints;
+    api.createCheckpoint = function (id) { return call(function () {
+      return typeof hv.createCheckpoint === 'function' ? hv.createCheckpoint(id) : 0;
+    }, 0); };
+    api.restoreCheckpoint = function (cp, id) { return call(function () {
+      return typeof hv.restoreCheckpoint === 'function' ? hv.restoreCheckpoint(cp, id) : 7;
+    }, 7); };
+    api.deleteCheckpoint = function (cp) { return call(function () {
+      return typeof hv.deleteCheckpoint === 'function' ? hv.deleteCheckpoint(cp) : 7;
+    }, 7); };
+    api.cloneCheckpoint = function (cp, name) { return call(function () {
+      return typeof hv.cloneCheckpoint === 'function' ? hv.cloneCheckpoint(cp, name) : 0;
+    }, 0); };
+    api.clonePartition = function (id, name) { return call(function () {
+      return typeof hv.clonePartition === 'function' ? hv.clonePartition(id, name) : 0;
+    }, 0); };
+    api.checkpointStatus = function () { return call(function () {
+      return typeof hv.checkpointStatus === 'function' ? hv.checkpointStatus() : { code: 7, name: 'not implemented', ok: false };
+    }, { code: 7, name: 'not implemented', ok: false }); };
+    api.checkpointLimits = function () { return call(function () {
+      return typeof hv.checkpointLimits === 'function' ? hv.checkpointLimits() : { maxBytes: 0, formatVersion: 0 };
+    }, { maxBytes: 0, formatVersion: 0 }); };
     api.memoryMap = function () { return null; };   /* this build cannot enumerate SLAT mappings */
     api.framebuffer = function (id) {
       var rgba = call(function () { return hv.guestScreen(id); }, null);
@@ -404,7 +429,8 @@
       var readyHooked = false;
       var unavailable = false;
       var lastReason = '';
-      var lastParts = [], lastVps = [], lastInfo = null, lastVmbus = [];
+      var lastParts = [], lastVps = [], lastInfo = null, lastVmbus = [], lastCheckpoints = [];
+      var lastCheckpointStatus = null, lastCheckpointLimits = null;
 
       /* ------------------------------------------------------------- chrome */
       win.el.style.display = 'flex';
@@ -494,6 +520,9 @@
           stop: !unavailable && !!p && (code === 2 || code === 3 || code === 4 || code === 6),
           reset: !unavailable && !!p && (code === 3 || code === 4),
           save: !unavailable && !!p && (code === 2 || code === 3 || code === 4),
+          checkpoint: !unavailable && !!p && !isRootPart(p),
+          restoreCheckpoint: !unavailable && !!p && !isRootPart(p) && code !== 3,
+          clone: !unavailable && !!p && !isRootPart(p) && lastParts.length < lim,
           act: !unavailable && !!p
         };
         return can;
@@ -612,6 +641,80 @@
           'This action cannot be undone.',
           function () { runAction('deletePartition', 'delete'); });
       }
+      function checkpointStatusText(h) {
+        var s = safe(function () { return h && typeof h.checkpointStatus === 'function' ? h.checkpointStatus() : null; }, null);
+        if (!s) return 'The hypervisor did not report a checkpoint status.';
+        if (typeof s === 'number') return 'status ' + s;
+        return (s.name || ('status ' + (s.code == null ? '?' : s.code)));
+      }
+      function checkpointFailure(title, operation, h) {
+        var status = safe(function () { return h && typeof h.checkpointStatus === 'function' ? h.checkpointStatus() : null; }, null);
+        lastCheckpointStatus = status;
+        var why = status && typeof status === 'object' ? (status.name || ('status ' + status.code)) : checkpointStatusText(h);
+        W98.dialog.alert(title, 'The hypervisor could not ' + operation + '.\n\nReason: ' + why +
+          '\n\nCheckpoint memory and serialization limits are enforced by hypervisor.wasm.', 'error');
+      }
+      function createCheckpoint() {
+        var h = hvSurface(), p = currentPart();
+        if (!p || !h || typeof h.createCheckpoint !== 'function') { snd('beep'); return; }
+        var id = 0;
+        try { id = h.createCheckpoint(p.id) >>> 0; } catch (e) { id = 0; }
+        if (!id) { checkpointFailure('Create Checkpoint', 'create a checkpoint for "' + displayName(p) + '"', h); return; }
+        lastCheckpointStatus = { code: 0, name: 'success', ok: true };
+        refresh();
+      }
+      function checkpointRowsFor(id) {
+        return lastCheckpoints.filter(function (c) {
+          if (!c) return false;
+          if (id == null) return true;
+          if (c.partition === id || c.sourcePartition === id) return true;
+          for (var i = 0; i < lastParts.length; i++) {
+            var p = lastParts[i];
+            if (p && p.id === id && p.identity != null && c.partition === p.identity) return true;
+          }
+          return false;
+        });
+      }
+      function restoreCheckpoint(cp) {
+        var h = hvSurface(), p = currentPart();
+        if (!cp || !p || !h || typeof h.restoreCheckpoint !== 'function') { snd('beep'); return; }
+        confirmThen('Restore Checkpoint',
+          'Restore checkpoint ' + str(cp.id) + ' to "' + displayName(p) + '"?\n\n' +
+          'The partition must be paused or stopped. Current guest state will be replaced.',
+          function () {
+            var st;
+            try { st = h.restoreCheckpoint(cp.id, p.id); } catch (e) { st = -1; }
+            if (st !== 0 && st !== true) { checkpointFailure('Restore Checkpoint', 'restore checkpoint ' + cp.id, h); return; }
+            refresh();
+          });
+      }
+      function deleteCheckpoint(cp) {
+        var h = hvSurface();
+        if (!cp || !h || typeof h.deleteCheckpoint !== 'function') { snd('beep'); return; }
+        confirmThen('Delete Checkpoint',
+          'Delete checkpoint ' + str(cp.id) + '?\n\nThis serialized state will be discarded.',
+          function () {
+            var st;
+            try { st = h.deleteCheckpoint(cp.id); } catch (e) { st = -1; }
+            if (st !== 0 && st !== true) { checkpointFailure('Delete Checkpoint', 'delete checkpoint ' + cp.id, h); return; }
+            refresh();
+          });
+      }
+      function clonePartition() {
+        var h = hvSurface(), p = currentPart();
+        if (!p || !h || typeof h.clonePartition !== 'function') { snd('beep'); return; }
+        var defaultName = displayName(p) + ' Clone';
+        W98.dialog.prompt('Clone Partition', 'Name for the cloned partition:', defaultName).then(function (name) {
+          if (name == null) return;
+          name = String(name).replace(/^\s+|\s+$/g, '') || defaultName;
+          var id = 0;
+          try { id = h.clonePartition(p.id, name) >>> 0; } catch (e) { id = 0; }
+          if (!id) { checkpointFailure('Clone Partition', 'clone "' + displayName(p) + '"', h); return; }
+          sel = { kind: 'part', id: id };
+          expanded['p' + id] = true;
+          refresh();
+        });
+      }
       function saveState() {
         var h = hvSurface();
         var p = currentPart();
@@ -688,7 +791,7 @@
           if (!h || typeof h.partitions !== 'function' || h.mode !== 'wasm') {
             unavailable = true;
             lastReason = unavailableReason(h);
-            lastParts = []; lastVps = []; lastInfo = null; lastVmbus = [];
+            lastParts = []; lastVps = []; lastInfo = null; lastVmbus = []; lastCheckpoints = [];
             renderUnavailable(lastReason);
             syncMenu();
             return;
@@ -698,6 +801,12 @@
           lastParts = arr(function () { return h.partitions(); });
           lastVps = arr(function () { return h.vps(); });
           lastVmbus = arr(function () { return h.vmbus(); });
+          lastCheckpoints = arr(function () {
+            return typeof h.checkpoints === 'function' ? h.checkpoints() : [];
+          });
+          lastCheckpointLimits = safe(function () {
+            return typeof h.checkpointLimits === 'function' ? h.checkpointLimits() : null;
+          }, null);
           /* a partition can disappear under us (deleted elsewhere): fall back */
           if (sel.kind !== 'root') {
             var livePart = false, liveVp = false, i;
@@ -1006,6 +1115,73 @@
         d.style.cssText = 'margin:3px 0 8px 0;color:#000';
         return d;
       }
+      function partitionIdForCheckpoint(cp) {
+        if (!cp) return null;
+        for (var i = 0; i < lastParts.length; i++) {
+          var p = lastParts[i];
+          if (!p) continue;
+          if (p.id === cp.partition || p.id === cp.sourcePartition ||
+              (p.identity != null && p.identity === cp.partition)) return p.id;
+        }
+        return null;
+      }
+      function checkpointBlock(targetId) {
+        var h = hvSurface();
+        var box = sec('Checkpoints');
+        var lim = lastCheckpointLimits || {};
+        var limitText = num(lim.maxBytes) == null ? 'unknown' : fmtBytes(num(lim.maxBytes));
+        var verText2 = num(lim.formatVersion) == null ? 'unknown' : String(lim.formatVersion);
+        box.appendChild(note('Version ' + verText2 + '; serialization limit ' + limitText +
+          '. Checkpoints include modeled partition, VP, register, timer, SynIC, MSR, GPA, memory, framebuffer and heartbeat state.'));
+        var rows = checkpointRowsFor(targetId);
+        var wrap = el('div', 'col');
+        wrap.style.cssText = 'gap:0';
+        var head = el('div', 'row');
+        head.style.cssText = 'height:17px;flex:0 0 auto;background:#c0c0c0;' +
+          'box-shadow:inset -1px -1px #0a0a0a,inset 1px 1px #fff,inset -2px -2px grey,inset 2px 2px #dfdfdf';
+        [['ID', 48], ['Name', 132], ['Source', 62], ['Bytes', 76], ['Version', 55], ['Actions', 128]].forEach(function (c) {
+          var d = el('div', '', c[0]);
+          d.style.cssText = 'flex:1 1 ' + c[1] + 'px;min-width:0;padding:0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+          head.appendChild(d);
+        });
+        wrap.appendChild(head);
+        var body = el('div', 'w98-listbox');
+        body.style.cssText = 'max-height:180px;overflow:auto;flex:1 1 auto;min-height:38px';
+        if (!rows.length) body.appendChild(el('div', 'w98-listitem', '(no checkpoints)'));
+        rows.forEach(function (cp) {
+          var row = el('div', 'w98-listitem');
+          row.style.alignItems = 'center';
+          var srcId = partitionIdForCheckpoint(cp);
+          var vals = [str(cp.id), str(cp.name || ('Checkpoint ' + cp.id)), srcId == null ? str(cp.partition || '-') : str(srcId),
+            fmtBytes(num(cp.bytes)), num(cp.version) == null ? '-' : String(cp.version)];
+          vals.forEach(function (v, i) {
+            var d = el('div', '', esc(v));
+            d.style.cssText = 'flex:1 1 ' + [48, 132, 62, 76, 55][i] + 'px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px';
+            row.appendChild(d);
+          });
+          var actions = el('div', 'row');
+          actions.style.cssText = 'flex:1 1 128px;gap:2px;min-width:128px';
+          var rb = el('button', 'w98-toolbtn', 'Restore');
+          rb.disabled = !srcId || !h || typeof h.restoreCheckpoint !== 'function' || (currentPart() && partStateCode(currentPart()) === 3);
+          rb.title = 'Restore this checkpoint';
+          rb.onclick = function (e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            if (srcId != null) select({ kind: 'part', id: srcId });
+            restoreCheckpoint(cp);
+          };
+          actions.appendChild(rb);
+          var db = el('button', 'w98-toolbtn', 'Delete');
+          db.disabled = !h || typeof h.deleteCheckpoint !== 'function';
+          db.title = 'Delete this checkpoint';
+          db.onclick = function (e) { if (e && e.stopPropagation) e.stopPropagation(); deleteCheckpoint(cp); };
+          actions.appendChild(db);
+          row.appendChild(actions);
+          body.appendChild(row);
+        });
+        wrap.appendChild(body);
+        box.appendChild(wrap);
+        return box;
+      }
 
       function renderPane() {
         if (unavailable) return;
@@ -1118,6 +1294,7 @@
           var s3 = sec('Virtual processors');
           s3.appendChild(table(VP_COLS, vpRows(lastVps), '(no virtual processors)'));
           body.appendChild(s3);
+          body.appendChild(checkpointBlock(null));
         } else {
           var p = currentPart();
           if (!p) { body.appendChild(el('div', '', 'The selected partition is no longer present.')); return; }
@@ -1135,12 +1312,24 @@
           sB.appendChild(sel.kind === 'vp' ? partDetailGrid(p)
             : table(VP_COLS, vpRows(vpsOf(p.id)), '(this partition has no virtual processors)'));
           body.appendChild(sB);
+          if (sel.kind !== 'vp') body.appendChild(checkpointBlock(p.id));
         }
 
         var sC = sec('Hypervisor counters');
         var counters = countersBlock();
         sC.appendChild(counters || el('div', '', '(the hypervisor reported no counters)'));
         body.appendChild(sC);
+
+        var sCp = sec('Checkpoint service');
+        var cpLim = lastCheckpointLimits || {};
+        var cpStatus = lastCheckpointStatus;
+        sCp.appendChild(grid([
+          ['Checkpoints:', fmtNum(lastCheckpoints.length)],
+          ['Format version:', num(cpLim.formatVersion) == null ? '-' : String(cpLim.formatVersion)],
+          ['Serialization limit:', fmtBytes(num(cpLim.maxBytes))],
+          ['Last operation:', cpStatus ? ((cpStatus.ok ? 'success' : 'failed') + ' (' + (cpStatus.name || cpStatus.code) + ')') : 'none']
+        ]));
+        body.appendChild(sCp);
 
         var sD = sec('Hypervisor log');
         var h = hvSurface();
@@ -1386,6 +1575,7 @@
           { text: 'Hypervisor: ' + vendor + (version && version !== '-' ? ' ' + version : ''), width: 218 },
           { text: 'Partitions: ' + lastParts.length, width: 96 },
           { text: 'VPs: ' + lastVps.length, width: 60 },
+          { text: 'Checkpoints: ' + lastCheckpoints.length, width: 104 },
           { text: 'Hypercalls: ' + fmtNum(hc), width: 124 },
           { text: 'SLAT faults: ' + fmtNum(faults) }
         ]);
@@ -1436,6 +1626,8 @@
                   function () { runAction('resetPartition', 'reset'); });
               } },
               { label: 'Save &State', disabled: !can.save, onclick: saveState },
+              { label: 'Create &Checkpoint', disabled: !can.checkpoint, onclick: createCheckpoint },
+              { label: '&Clone Partition…', disabled: !can.clone, onclick: clonePartition },
               { type: 'sep' },
               { label: '&Delete', disabled: !hasSel || !can.remove, onclick: deletePartition }
             ]
@@ -1454,7 +1646,8 @@
         var can = availability();
         var sig = [tab, selKey(), unavailable ? 1 : 0, can.create ? 1 : 0, can.remove ? 1 : 0,
           can.start ? 1 : 0, can.pause ? 1 : 0, can.resume ? 1 : 0, can.stop ? 1 : 0,
-          can.reset ? 1 : 0, can.save ? 1 : 0].join(',');
+          can.reset ? 1 : 0, can.save ? 1 : 0, can.checkpoint ? 1 : 0, can.clone ? 1 : 0,
+          lastCheckpoints.length].join(',');
         if (sig === menuSig) return;
         menuSig = sig;
         win.setMenu(menuDef());
@@ -1483,6 +1676,10 @@
       tool.reset = toolButton('Reset', null, 'Reset the selected partition', function () { runAction('resetPartition', 'reset'); });
       tool.sep2 = el('div', 'w98-toolbar-sep');
       toolbar.appendChild(tool.sep2);
+      tool.checkpoint = toolButton('Checkpoint', null, 'Create a checkpoint of the selected partition', createCheckpoint);
+      tool.clone = toolButton('Clone', null, 'Clone the selected partition', clonePartition);
+      tool.sep3 = el('div', 'w98-toolbar-sep');
+      toolbar.appendChild(tool.sep3);
       tool.refresh = toolButton('Refresh', 'refresh', 'Read the hypervisor again', function () { refresh(); });
 
       function updateToolbar() {
@@ -1494,6 +1691,8 @@
         tool.resume.disabled = !can.resume;
         tool.stop.disabled = !can.stop;
         tool.reset.disabled = !can.reset;
+        tool.checkpoint.disabled = !can.checkpoint;
+        tool.clone.disabled = !can.clone;
         tool.refresh.disabled = !!unavailable;
       }
 

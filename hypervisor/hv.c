@@ -106,6 +106,12 @@ typedef uint64_t u64;
 #define HV_STATUS_SLAT_FAULT        6u
 #define HV_STATUS_NOT_IMPLEMENTED   7u
 #define HV_STATUS_REP_NOT_COMPLETE  0x10u
+#define HV_STATUS_CHECKPOINT_CORRUPT 8u
+#define HV_STATUS_CHECKPOINT_UNSUPPORTED 9u
+#define HV_STATUS_CHECKPOINT_LIMIT 10u
+#define HV_STATUS_CHECKPOINT_RUNNING 11u
+#define HV_STATUS_CHECKPOINT_NOT_FOUND 12u
+#define HV_STATUS_STALE_ID 13u
 #define VTL0 0u
 #define VTL1 1u
 #define VTL_ACCESS_W 1u
@@ -450,6 +456,9 @@ void guest_reset(u32 part, u32 vp);
 void guest_timer_fire(u32 part);
 u32  guest_field(u32 part, u32 f);
 void guest_checkpoint_restore(u32 part, u32 stage, u32 heartbeat);
+u32  guest_state_size(void);
+u32  guest_state_save(u32 part, u32 dst, u32 max);
+u32  guest_state_load(u32 part, u32 src, u32 len, u32 vp, u32 channel);
 u32  hv_synic_eom(u32 vp);
 i32  hv_vmbus_close(u32 ch);
 u32  hv_isa_step(u32 vp, u32 budget);
@@ -470,6 +479,66 @@ static u32 rr_cursor;
 static u8  CHECKPOINT_FB[MAX_PARTS][FB_BYTES];
 static u32 CHECKPOINT_VALID[MAX_PARTS], CHECKPOINT_HASH[MAX_PARTS];
 static u32 CHECKPOINT_HEARTBEAT[MAX_PARTS], CHECKPOINT_STAGE[MAX_PARTS];
+
+/* --------------------------------------------------------------------------
+   Versioned bounded checkpoint store.  The legacy HVC1 save/restore ABI above
+   remains unchanged.  This store is the management-facing partition image:
+   four 1 MiB slots, generation-tagged handles, and a fixed section table.
+   The image contains no host pointers; PFNs are represented as GPA mappings
+   and restored into newly owned pages. */
+#define CKPT_MAGIC              0x50435648u /* "HVCP" */
+#define CKPT_VERSION            1u
+#define CKPT_MAX                4u
+#define CKPT_MAX_BYTES          (1024u * 1024u)
+#define CKPT_HEADER_BYTES       32u
+#define CKPT_SECTION_BYTES      16u
+#define CKPT_SECTION_MAX        7u
+#define CKPT_GUEST_MAX          4096u
+#define CKPT_SEC_PARTITION      1u
+#define CKPT_SEC_VPS            2u
+#define CKPT_SEC_CHANNEL        3u
+#define CKPT_SEC_GUEST          4u
+#define CKPT_SEC_MAP            5u
+#define CKPT_SEC_MEMORY         6u
+#define CKPT_SEC_FRAMEBUFFER    7u
+
+typedef struct {
+    u32 type, offset, length, checksum;
+} CkptSection;
+typedef struct {
+    u32 used, generation, source_id, source_state, creation_seq;
+    u32 bytes, mapped_pages, memory_bytes, guest_bytes, vp_count, name_len;
+    char name[NAME_LEN];
+    u8 image[CKPT_MAX_BYTES];
+} CkptSlot;
+static CkptSlot CKPTS[CKPT_MAX];
+static u32 CKPT_NEXT_GENERATION, CKPT_SEQUENCE, CKPT_LAST_STATUS;
+static Partition CKPT_PART_TMP;
+static Vp CKPT_VPS_TMP[MAX_VPS_PER_PART];
+static Channel CKPT_CH_TMP;
+
+static void *memcpy(void *dst, const void *src, u32 n);
+
+static u32 ckpt_handle(const CkptSlot *c) {
+    return (c->generation << ID_SLOT_BITS) | ((u32)(c - CKPTS) + 1u);
+}
+static CkptSlot *ckpt_of(u32 id) {
+    u32 slot = id & ID_SLOT_MASK, generation;
+    CkptSlot *c;
+    if (!slot || slot > CKPT_MAX) return 0;
+    c = &CKPTS[slot - 1u];
+    generation = id >> ID_SLOT_BITS;
+    return (c->used && c->generation == generation) ? c : 0;
+}
+static u32 ckpt_fnv(const u8 *p, u32 n) {
+    u32 h = 2166136261u;
+    while (n--) { h ^= *p++; h *= 16777619u; }
+    return h;
+}
+static u32 ckpt_u32(const u8 *p) {
+    u32 v; memcpy(&v, p, 4u); return v;
+}
+static void ckpt_put_u32(u8 *p, u32 v) { memcpy(p, &v, 4u); }
 
 static Partition *part_of(u32 id);
 static u32 part_id_of(const Partition *p);
@@ -1165,6 +1234,7 @@ u32 hv_init(u32 ref_time_ms, u32 max_partitions, u32 max_vps, u32 phys_bytes) {
     memset(VPS, 0, sizeof(VPS));
     memset(VMX_FIELDS, 0, sizeof(VMX_FIELDS)); memset(VMX_EPT, 0, sizeof(VMX_EPT)); memset(VMX_EPT_AD, 0, sizeof(VMX_EPT_AD)); memset(VMX_EPT_TABLE, 0, sizeof(VMX_EPT_TABLE));
     memset(CHANS, 0, sizeof(CHANS));
+    memset(CKPTS, 0, sizeof(CKPTS));
     memset(PAGES, 0, sizeof(PAGES));
     HLOG_LEN = 0;
     REF_TIME = ref_time_ms;
@@ -1178,6 +1248,9 @@ u32 hv_init(u32 ref_time_ms, u32 max_partitions, u32 max_vps, u32 phys_bytes) {
     g_slices = g_preemptions = g_ctx_switches = g_idle_slices = 0;
     rr_cursor = 0;
     vmx_feature_control_reg = 0;
+    CKPT_NEXT_GENERATION = 1u;
+    CKPT_SEQUENCE = 0u;
+    CKPT_LAST_STATUS = HV_STATUS_SUCCESS;
     for (i = 0; i < PAGE; i++) CANARY_PAT[i] = (u8)(0xA5u ^ (u8)(i * 7u));
     /* the root partition: created here and never deletable */
     r = &PARTS[0];
@@ -2597,6 +2670,272 @@ i32 hv_checkpoint_restore(u32 part, u32 src, u32 len) {
         guest_checkpoint_restore(part, CHECKPOINT_STAGE[slot], CHECKPOINT_HEARTBEAT[slot]);
     }
     return HV_STATUS_SUCCESS;
+}
+
+/* --------------------------------------------------------------------------
+   Management-facing bounded checkpoint store (HVCP v1).  These names are
+   intentionally separate from the legacy hv_checkpoint_save/restore ABI. */
+static CkptSection *ckpt_sections(CkptSlot *c) {
+    return (CkptSection *)(c->image + CKPT_HEADER_BYTES);
+}
+static u32 ckpt_add_section(CkptSlot *c, u32 *n, u32 type, const void *src, u32 len, u32 *off) {
+    CkptSection *s;
+    if (*n >= CKPT_SECTION_MAX || *off + len > CKPT_MAX_BYTES) return 0u;
+    s = &ckpt_sections(c)[*n];
+    s->type = type; s->offset = *off; s->length = len;
+    if (len) memcpy(c->image + *off, src, len);
+    s->checksum = ckpt_fnv(c->image + *off, len);
+    *off += len; (*n)++;
+    return 1u;
+}
+static CkptSection *ckpt_find_section(CkptSlot *c, u32 type) {
+    u32 i, n = ckpt_u32(c->image + 28u);
+    CkptSection *s = ckpt_sections(c);
+    for (i = 0; i < n && i < CKPT_SECTION_MAX; i++) if (s[i].type == type) return &s[i];
+    return 0;
+}
+static u32 ckpt_validate(CkptSlot *c) {
+    u32 i, j, total, n, overall, seen = 0u;
+    CkptSection *s;
+    if (!c || !c->used) return HV_STATUS_CHECKPOINT_NOT_FOUND;
+    if (ckpt_u32(c->image) != CKPT_MAGIC) return HV_STATUS_CHECKPOINT_CORRUPT;
+    if (ckpt_u32(c->image + 4u) != CKPT_VERSION) return HV_STATUS_CHECKPOINT_UNSUPPORTED;
+    if (ckpt_u32(c->image + 8u) != CKPT_HEADER_BYTES) return HV_STATUS_CHECKPOINT_CORRUPT;
+    total = ckpt_u32(c->image + 12u);
+    n = ckpt_u32(c->image + 28u);
+    if (total != c->bytes || total < CKPT_HEADER_BYTES + CKPT_SECTION_BYTES * CKPT_SECTION_MAX ||
+        total > CKPT_MAX_BYTES || n != CKPT_SECTION_MAX ||
+        ckpt_u32(c->image + 20u) != c->source_id || ckpt_u32(c->image + 24u) != c->source_state)
+        return HV_STATUS_CHECKPOINT_CORRUPT;
+    overall = ckpt_fnv(c->image + 20u, total - 20u);
+    if (overall != ckpt_u32(c->image + 16u)) return HV_STATUS_CHECKPOINT_CORRUPT;
+    s = ckpt_sections(c);
+    for (i = 0; i < n; i++) {
+        if (s[i].type < CKPT_SEC_PARTITION || s[i].type > CKPT_SEC_FRAMEBUFFER ||
+            (seen & (1u << s[i].type)) ||
+            s[i].offset < CKPT_HEADER_BYTES + CKPT_SECTION_BYTES * n ||
+            s[i].offset > total || s[i].length > total - s[i].offset ||
+            ckpt_fnv(c->image + s[i].offset, s[i].length) != s[i].checksum) return HV_STATUS_CHECKPOINT_CORRUPT;
+        for (j = 0; j < i; j++) {
+            if (s[i].offset < s[j].offset + s[j].length &&
+                s[j].offset < s[i].offset + s[i].length) return HV_STATUS_CHECKPOINT_CORRUPT;
+        }
+        seen |= 1u << s[i].type;
+    }
+    if (seen != 0xFEu) return HV_STATUS_CHECKPOINT_CORRUPT;
+    if (!ckpt_find_section(c, CKPT_SEC_PARTITION) || !ckpt_find_section(c, CKPT_SEC_VPS) ||
+        !ckpt_find_section(c, CKPT_SEC_GUEST) || !ckpt_find_section(c, CKPT_SEC_MAP) ||
+        !ckpt_find_section(c, CKPT_SEC_MEMORY) || !ckpt_find_section(c, CKPT_SEC_FRAMEBUFFER))
+        return HV_STATUS_CHECKPOINT_CORRUPT;
+    return HV_STATUS_SUCCESS;
+}
+static void ckpt_set_status(u32 st) { CKPT_LAST_STATUS = st; }
+static u32 ckpt_bad_handle_status(u32 id) {
+    return id ? HV_STATUS_STALE_ID : HV_STATUS_CHECKPOINT_NOT_FOUND;
+}
+static CkptSlot *ckpt_free_slot(void) {
+    u32 i;
+    for (i = 0; i < CKPT_MAX; i++) if (!CKPTS[i].used) return &CKPTS[i];
+    return 0;
+}
+
+u32 hv_ckpt_create(u32 part, u32 name_ptr, u32 name_len) {
+    Partition *p = part_of(part); CkptSlot *c; CkptSection *s;
+    u32 i, n = 0, off, total, guest_bytes, map[GPA_PAGES];
+    u32 vp_bytes, part_bytes = (u32)sizeof(Partition), ch_bytes = (u32)sizeof(Channel);
+    Channel *ch = 0;
+    if (!p) { ckpt_set_status(HV_STATUS_INVALID_PARAMETER); return 0u; }
+    if (p->is_root) { ckpt_set_status(HV_STATUS_ACCESS_DENIED); return 0u; }
+    c = ckpt_free_slot();
+    if (!c) { ckpt_set_status(HV_STATUS_CHECKPOINT_LIMIT); return 0u; }
+    guest_bytes = guest_state_size();
+    if (!guest_bytes || guest_bytes > CKPT_GUEST_MAX) { ckpt_set_status(HV_STATUS_CHECKPOINT_LIMIT); return 0u; }
+    vp_bytes = p->vp_count * (u32)sizeof(Vp);
+    total = CKPT_HEADER_BYTES + CKPT_SECTION_BYTES * CKPT_SECTION_MAX + part_bytes + vp_bytes + ch_bytes + guest_bytes +
+            GPA_PAGES * 4u + GPA_PAGES * PAGE + FB_BYTES;
+    if (total > CKPT_MAX_BYTES) { ckpt_set_status(HV_STATUS_CHECKPOINT_LIMIT); return 0u; }
+    memset(c, 0, sizeof(*c));
+    c->used = 1u;
+    c->generation = CKPT_NEXT_GENERATION++;
+    if (!c->generation) c->generation = CKPT_NEXT_GENERATION++;
+    c->source_id = part_id_of(p);
+    c->source_state = p->state;
+    c->creation_seq = ++CKPT_SEQUENCE;
+    if (name_len > NAME_LEN - 1u) name_len = NAME_LEN - 1u;
+    if (name_ptr && name_len) memcpy(c->name, (const void *)name_ptr, name_len);
+    else { memcpy(c->name, "Checkpoint", 10u); name_len = 10u; }
+    c->name[name_len] = 0; c->name_len = name_len;
+    off = CKPT_HEADER_BYTES + CKPT_SECTION_BYTES * CKPT_SECTION_MAX;
+    if (!ckpt_add_section(c, &n, CKPT_SEC_PARTITION, p, part_bytes, &off)) goto limit;
+    for (i = 0; i < p->vp_count; i++) {
+        Vp *v = vp_of(p->vps[i]);
+        if (!v) goto invalid;
+        memcpy(CKPT_VPS_TMP + i, v, sizeof(Vp));
+    }
+    if (!ckpt_add_section(c, &n, CKPT_SEC_VPS, CKPT_VPS_TMP, vp_bytes, &off)) goto limit;
+    ch = chan_of(p->channel);
+    if (ch) { if (!ckpt_add_section(c, &n, CKPT_SEC_CHANNEL, ch, ch_bytes, &off)) goto limit; }
+    else { memset(&CKPT_CH_TMP, 0, sizeof(CKPT_CH_TMP)); if (!ckpt_add_section(c, &n, CKPT_SEC_CHANNEL, &CKPT_CH_TMP, ch_bytes, &off)) goto limit; }
+    if (n >= CKPT_SECTION_MAX || off + guest_bytes > CKPT_MAX_BYTES) goto limit;
+    s = &ckpt_sections(c)[n++];
+    s->type = CKPT_SEC_GUEST; s->offset = off; s->length = guest_bytes;
+    if (guest_state_save(part, (u32)(uintptr_t)(c->image + off), guest_bytes) != guest_bytes) goto invalid;
+    s->checksum = ckpt_fnv(c->image + off, guest_bytes); off += guest_bytes;
+    for (i = 0; i < GPA_PAGES; i++) map[i] = p->slat[i];
+    if (!ckpt_add_section(c, &n, CKPT_SEC_MAP, map, GPA_PAGES * 4u, &off)) goto limit;
+    {
+        u8 *mem = c->image + off;
+        for (i = 0; i < GPA_PAGES; i++) {
+            u32 e = p->slat[i], pf = e >> 3u;
+            if (e && pf < HOST_PAGES) memcpy(mem + i * PAGE, &PHYS[pf << PAGE_SHIFT], PAGE);
+            else memset(mem + i * PAGE, 0, PAGE);
+        }
+        if (!ckpt_add_section(c, &n, CKPT_SEC_MEMORY, mem, GPA_PAGES * PAGE, &off)) goto limit;
+    }
+    /* Keep a separately checksummed framebuffer copy even though the pixels
+       also occur in the general memory section. */
+    {
+        CkptSection *ms = n ? &ckpt_sections(c)[n - 1u] : 0;
+        if (!ms || FB_GPA + FB_BYTES > ms->length ||
+            !ckpt_add_section(c, &n, CKPT_SEC_FRAMEBUFFER,
+                              c->image + ms->offset + FB_GPA, FB_BYTES, &off)) goto limit;
+    }
+    ckpt_put_u32(c->image, CKPT_MAGIC); ckpt_put_u32(c->image + 4u, CKPT_VERSION);
+    ckpt_put_u32(c->image + 8u, CKPT_HEADER_BYTES); ckpt_put_u32(c->image + 12u, off);
+    ckpt_put_u32(c->image + 16u, 0u); ckpt_put_u32(c->image + 20u, c->source_id);
+    ckpt_put_u32(c->image + 24u, c->source_state); ckpt_put_u32(c->image + 28u, n);
+    ckpt_put_u32(c->image + 16u, ckpt_fnv(c->image + 20u, off - 20u));
+    c->bytes = off; c->mapped_pages = p->mapped_pages; c->memory_bytes = p->mapped_pages * PAGE;
+    c->guest_bytes = guest_bytes; c->vp_count = p->vp_count;
+    ckpt_set_status(HV_STATUS_SUCCESS);
+    return ckpt_handle(c);
+limit:
+    c->used = 0u; ckpt_set_status(HV_STATUS_CHECKPOINT_LIMIT); return 0u;
+invalid:
+    c->used = 0u; ckpt_set_status(HV_STATUS_INVALID_PARAMETER); return 0u;
+}
+
+u32 hv_ckpt_count(void) { u32 i, n = 0; for (i = 0; i < CKPT_MAX; i++) if (CKPTS[i].used) n++; return n; }
+u32 hv_ckpt_slot(u32 slot) { return slot < CKPT_MAX && CKPTS[slot].used ? ckpt_handle(&CKPTS[slot]) : 0u; }
+u32 hv_ckpt_field(u32 id, u32 f) {
+    CkptSlot *c = ckpt_of(id);
+    if (!c) return 0u;
+    switch (f) {
+    case 0: return id; case 1: return c->source_id; case 2: return (u32)(uintptr_t)c->name;
+    case 3: return c->name_len; case 4: return CKPT_VERSION; case 5: return c->bytes;
+    case 6: return c->memory_bytes; case 7: return c->mapped_pages; case 8: return c->vp_count;
+    case 9: return c->source_state; case 10: return c->creation_seq; case 11: return CKPT_LAST_STATUS;
+    default: return 0u;
+    }
+}
+u32 hv_ckpt_data_ptr(u32 id) { CkptSlot *c = ckpt_of(id); return c ? (u32)(uintptr_t)c->image : 0u; }
+u32 hv_ckpt_data_len(u32 id) { CkptSlot *c = ckpt_of(id); return c ? c->bytes : 0u; }
+u32 hv_ckpt_last_status(void) { return CKPT_LAST_STATUS; }
+u32 hv_ckpt_max_bytes(void) { return CKPT_MAX_BYTES; }
+u32 hv_ckpt_format_version(void) { return CKPT_VERSION; }
+u32 hv_partition_identity(u32 part) { Partition *p = part_of(part); return p ? part_id_of(p) : 0u; }
+
+static i32 ckpt_restore_into(CkptSlot *c, Partition *target, u32 target_id, u32 force_stopped) {
+    CkptSection *sp, *sv, *sc, *sg, *sm, *smm, *sf;
+    u32 i, old_present, old_vps[MAX_VPS_PER_PART], old_chid, slot;
+    u32 old_win, old_lo, old_hi, old_parent, old_gen, old_isroot;
+    u32 old_offer_lo = 0, old_offer_hi = 0, old_chgen = 0;
+    const u8 *map, *mem;
+    Channel *tc;
+    u32 st = ckpt_validate(c);
+    if (st != HV_STATUS_SUCCESS) { ckpt_set_status(st); return (i32)st; }
+    sp = ckpt_find_section(c, CKPT_SEC_PARTITION); sv = ckpt_find_section(c, CKPT_SEC_VPS);
+    sc = ckpt_find_section(c, CKPT_SEC_CHANNEL); sg = ckpt_find_section(c, CKPT_SEC_GUEST);
+    sm = ckpt_find_section(c, CKPT_SEC_MAP); smm = ckpt_find_section(c, CKPT_SEC_MEMORY);
+    sf = ckpt_find_section(c, CKPT_SEC_FRAMEBUFFER);
+    if (!sp || !sv || !sc || !sg || !sm || !smm || !sf || sp->length != sizeof(Partition) ||
+        sv->length != c->vp_count * sizeof(Vp) || sg->length != c->guest_bytes ||
+        sm->length != GPA_PAGES * 4u || smm->length != GPA_PAGES * PAGE || sf->length != FB_BYTES) {
+        ckpt_set_status(HV_STATUS_CHECKPOINT_CORRUPT); return HV_STATUS_CHECKPOINT_CORRUPT;
+    }
+    memcpy(&CKPT_PART_TMP, c->image + sp->offset, sizeof(Partition));
+    memcpy(CKPT_VPS_TMP, c->image + sv->offset, sv->length);
+    memcpy(&CKPT_CH_TMP, c->image + sc->offset, sizeof(Channel));
+    if (target->vp_count != c->vp_count || !target->win_first) { ckpt_set_status(HV_STATUS_INSUFFICIENT_MEM); return HV_STATUS_INSUFFICIENT_MEM; }
+    for (i = 0; i < target->vp_count; i++) old_vps[i] = target->vps[i];
+    old_chid = target->channel; tc = chan_of(old_chid);
+    if (tc) { old_offer_lo = tc->offer_lo; old_offer_hi = tc->offer_hi; old_chgen = tc->generation; }
+    old_win = target->win_first; old_lo = target->canary_lo; old_hi = target->canary_hi;
+    old_parent = target->parent; old_gen = target->generation; old_isroot = target->is_root;
+    old_present = target->mapped_pages;
+    if (g_present >= old_present) g_present -= old_present; else g_present = 0;
+    slot = (u32)(target - PARTS);
+    memcpy(target, &CKPT_PART_TMP, sizeof(Partition));
+    target->used = 1u; target->is_root = old_isroot; target->parent = old_parent;
+    target->generation = old_gen; target->win_first = old_win; target->canary_lo = old_lo; target->canary_hi = old_hi;
+    for (i = 0; i < target->vp_count; i++) target->vps[i] = old_vps[i];
+    target->channel = old_chid; target->state = force_stopped ? PS_STOPPED : CKPT_PART_TMP.state;
+    target->mapped_pages = 0u;
+    map = c->image + sm->offset; mem = c->image + smm->offset;
+    for (i = 0; i < GPA_PAGES; i++) {
+        u32 e = ckpt_u32(map + i * 4u), pf = old_win + 1u + i;
+        /* The image stores source PFNs only as a description of the mapping.
+           The target owns a fresh, fixed GPA window, so rebuild each SLAT
+           entry with its new PFN while preserving permissions. */
+        target->slat[i] = e ? ((pf << 3u) | (e & 7u)) : 0u;
+        PAGES[pf].owner = slot + 1u; PAGES[pf].gpa = i << PAGE_SHIFT; PAGES[pf].flags = e & 7u;
+        PAGES[pf].mapped = e && (e & SLAT_R) ? 1u : 0u;
+        if (PAGES[pf].mapped) { g_present++; target->mapped_pages++; }
+        memcpy(&PHYS[pf << PAGE_SHIFT], mem + i * PAGE, PAGE);
+    }
+    canary_fill(target);
+    for (i = 0; i < target->vp_count; i++) {
+        Vp *v = vp_of(old_vps[i]);
+        if (v) { memcpy(v, &CKPT_VPS_TMP[i], sizeof(Vp)); v->used = 1u; v->part = slot; }
+        /* A clone from a running or paused image is stopped at the partition
+           boundary, while its VPs remain startable.  Preserve an explicitly
+           stopped/guest-halted image as halted. */
+        if (v && force_stopped && CKPT_PART_TMP.state != PS_STOPPED && v->state != VS_HALTED)
+            v->state = VS_CREATED;
+    }
+    if (tc) {
+        memcpy(tc, &CKPT_CH_TMP, sizeof(Channel));
+        tc->used = 1u; tc->part = target_id; tc->chid = old_chid; tc->generation = old_chgen;
+        tc->offer_lo = old_offer_lo; tc->offer_hi = old_offer_hi;
+        target->channel = old_chid;
+    }
+    if (target->timer_vp) target->timer_vp = old_vps[0];
+    (void)guest_state_load(target_id, (u32)(uintptr_t)(c->image + sg->offset), sg->length, old_vps[0], old_chid);
+    ckpt_set_status(HV_STATUS_SUCCESS);
+    return HV_STATUS_SUCCESS;
+}
+
+i32 hv_ckpt_restore(u32 id, u32 part) {
+    CkptSlot *c = ckpt_of(id); Partition *p;
+    i32 st;
+    if (!c) { u32 bad = ckpt_bad_handle_status(id); ckpt_set_status(bad); return (i32)bad; }
+    p = part_of(part ? part : c->source_id);
+    if (!p) { ckpt_set_status(HV_STATUS_INVALID_PARAMETER); return HV_STATUS_INVALID_PARAMETER; }
+    if (p->is_root) { ckpt_set_status(HV_STATUS_ACCESS_DENIED); return HV_STATUS_ACCESS_DENIED; }
+    if (p->state == PS_RUNNING) { ckpt_set_status(HV_STATUS_CHECKPOINT_RUNNING); return HV_STATUS_CHECKPOINT_RUNNING; }
+    st = ckpt_restore_into(c, p, part_id_of(p), 0);
+    return st;
+}
+
+i32 hv_ckpt_delete(u32 id) {
+    CkptSlot *c = ckpt_of(id);
+    if (!c) { u32 bad = ckpt_bad_handle_status(id); ckpt_set_status(bad); return (i32)bad; }
+    c->used = 0u; ckpt_set_status(HV_STATUS_SUCCESS); return HV_STATUS_SUCCESS;
+}
+
+u32 hv_ckpt_clone(u32 id, u32 name_ptr, u32 name_len) {
+    CkptSlot *c = ckpt_of(id); u32 part, i; i32 st;
+    if (!c) { ckpt_set_status(ckpt_bad_handle_status(id)); return 0u; }
+    st = (i32)ckpt_validate(c); if (st != HV_STATUS_SUCCESS) { ckpt_set_status((u32)st); return 0u; }
+    part = hv_partition_create(name_ptr, name_len);
+    if (!part) { ckpt_set_status(HV_STATUS_INSUFFICIENT_MEM); return 0u; }
+    for (i = 0; i < c->vp_count; i++) if (!hv_vp_create(part, i)) { hv_partition_delete(part); ckpt_set_status(HV_STATUS_INSUFFICIENT_MEM); return 0u; }
+    st = hv_partition_init(part);
+    if (st != HV_STATUS_SUCCESS) { hv_partition_delete(part); ckpt_set_status((u32)st); return 0u; }
+    st = ckpt_restore_into(c, part_of(part), part, 1u);
+    if (st != HV_STATUS_SUCCESS) { hv_partition_delete(part); return 0u; }
+    ckpt_set_status(HV_STATUS_SUCCESS);
+    return part;
 }
 u32 hv_migrate_precopy(u32 src, u32 dst, u32 budget_pages) {
     Partition *s = part_of(src), *d = part_of(dst); u32 i, n = 0;

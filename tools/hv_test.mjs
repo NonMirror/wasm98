@@ -30,6 +30,8 @@ const M_SIMP = 0x40000083, M_SINT0 = 0x40000090;
 /* status codes */
 const S_OK = 0, S_INVALID = 2, S_DENIED = 3, S_BADSTATE = 5, S_SLAT = 6, S_NOIMPL = 7;
 const S_REP = 0x10;
+const S_CK_CORRUPT = 8, S_CK_UNSUPPORTED = 9, S_CK_LIMIT = 10,
+  S_CK_RUNNING = 11, S_CK_NOT_FOUND = 12, S_CK_STALE = 13;
 /* fixed-width guest register ISA used by the VTL1/L2 interpreter */
 const ISA = { HALT:0x00, MOVI:0x01, ADD:0x02, SUB:0x03, XOR:0x04, LOAD:0x05,
   STORE:0x06, JMP:0x07, JNZ:0x08, VMCALL:0x09, CPUID:0x0A, RDMSR:0x0B,
@@ -1052,6 +1054,97 @@ const chA = chanOf(A);
   H.hv_partition_stop(I);
 }
 
+
+/* ---- 28. bounded HVCP checkpoint store / restore / clone --------------- */
+{
+  const CP = part('Checkpoint Guest');
+  const CPVP = H.hv_vp_create(CP, 0);
+  ok(CP > 0 && CPVP > 0 && H.hv_partition_init(CP) === S_OK && H.hv_partition_start(CP) === S_OK,
+     'checkpoint guest initialized and started');
+  pump(12, 100);
+  const cpHb = H.hv_guest_heartbeat(CP);
+  H.hv_read_gpa(CP, 0x10000, scratch(), 4);
+  const cpPixel = u32s(scratch(), 1)[0];
+  const cpName = pushStr('boot checkpoint');
+  const CPID = call('hv_ckpt_create', CP, cpName.p, cpName.n);
+  ok(CPID > 0 && H.hv_ckpt_last_status() === S_OK && H.hv_ckpt_count() === 1,
+     'successful bounded checkpoint creation', [CPID, H.hv_ckpt_last_status()]);
+  ok(H.hv_ckpt_format_version() === 1 && H.hv_ckpt_data_len(CPID) <= H.hv_ckpt_max_bytes() &&
+     H.hv_ckpt_field(CPID, 1) === H.hv_partition_identity(CP) &&
+     H.hv_ckpt_field(CPID, 6) === H.hv_ckpt_field(CPID, 7) * 4096 &&
+     H.hv_ckpt_field(CPID, 8) === 1 && H.hv_ckpt_field(CPID, 11) === 0,
+     'checkpoint reports version, memory, VP and source identity fields');
+  ok(H.hv_ckpt_delete(0) === S_CK_NOT_FOUND && H.hv_ckpt_last_status() === S_CK_NOT_FOUND,
+     'a missing checkpoint handle reports an explicit not-found status');
+
+  ok(H.hv_partition_pause(CP) === S_OK && H.hv_ckpt_restore(CPID, CP) === S_OK &&
+     H.hv_partition_field(CP, 1) === PS.RUNNING && H.hv_guest_heartbeat(CP) === cpHb,
+     'checkpoint round trip restores guest progress and resumes deterministically');
+  ok(H.hv_ckpt_restore(CPID, CP) === S_CK_RUNNING && H.hv_ckpt_last_status() === S_CK_RUNNING,
+     'restore while running is refused with an explicit status');
+
+  H.hv_partition_pause(CP);
+  const cpBlob = H.hv_ckpt_data_ptr(CPID);
+  u8()[cpBlob + 100] ^= 1;
+  ok(H.hv_ckpt_restore(CPID, CP) === S_CK_CORRUPT && H.hv_ckpt_last_status() === S_CK_CORRUPT,
+     'corrupt checkpoint is rejected before changing the target');
+  H.hv_ckpt_delete(CPID);
+  const cp2 = H.hv_ckpt_create(CP, cpName.p, cpName.n);
+  const cp2Blob = H.hv_ckpt_data_ptr(cp2);
+  dv().setUint32(cp2Blob + 4, 99, true);
+  ok(H.hv_ckpt_restore(cp2, CP) === S_CK_UNSUPPORTED && H.hv_ckpt_last_status() === S_CK_UNSUPPORTED,
+     'unsupported checkpoint version is rejected');
+  H.hv_ckpt_delete(cp2);
+  const cp3 = H.hv_ckpt_create(CP, cpName.p, cpName.n);
+  ok(cp3 > 0 && H.hv_ckpt_restore(CPID, CP) === S_CK_STALE,
+     'deleted checkpoint handles stay stale after slot reuse', [CPID, cp3]);
+  const capCps = [cp3];
+  for (let i = 0; i < 3; i++) capCps.push(H.hv_ckpt_create(CP, cpName.p, cpName.n));
+  const overCap = H.hv_ckpt_create(CP, cpName.p, cpName.n);
+  ok(!overCap && H.hv_ckpt_last_status() === S_CK_LIMIT,
+     'checkpoint store capacity is bounded with an explicit limit status');
+  capCps.slice(1).forEach((id) => H.hv_ckpt_delete(id));
+
+  const cloneName = pushStr('Checkpoint Clone');
+  const CLONE = H.hv_ckpt_clone(cp3, cloneName.p, cloneName.n);
+  ok(CLONE > 0 && H.hv_ckpt_last_status() === S_OK && CLONE !== CP &&
+     H.hv_partition_identity(CLONE) !== H.hv_partition_identity(CP) &&
+     H.hv_partition_field(CLONE, 1) === PS.STOPPED,
+     'clone receives a fresh stopped partition identity');
+  const srcPfn = pfnFor(CP, 0x10000), clonePfn = pfnFor(CLONE, 0x10000);
+  ok(srcPfn > 0 && clonePfn > 0 && srcPfn !== clonePfn,
+     'clone owns independent GPA host pages', [srcPfn, clonePfn]);
+  H.hv_read_gpa(CLONE, 0x10000, scratch(), 4);
+  ok(u32s(scratch(), 1)[0] === cpPixel && H.hv_guest_heartbeat(CLONE) === cpHb,
+     'clone copies framebuffer and heartbeat state');
+  dv().setUint32(scratch(), 0xCAFEBABE, true);
+  H.hv_write_gpa(CLONE, 0x10000, scratch(), 4);
+  H.hv_read_gpa(CLONE, 0x10000, scratch(), 4);
+  const clonePixel = u32s(scratch(), 1)[0];
+  H.hv_read_gpa(CP, 0x10000, scratch(), 4);
+  ok(clonePixel === 0xCAFEBABE && u32s(scratch(), 1)[0] === cpPixel,
+     'clone GPA writes do not alias the original guest memory');
+  ok(H.hv_partition_start(CLONE) === S_OK && H.hv_partition_start(CP) === S_OK,
+     'original and clone can both resume after cloning');
+  const srcBefore = H.hv_guest_heartbeat(CP), cloneBefore = H.hv_guest_heartbeat(CLONE);
+  pump(4, 200);
+  ok(H.hv_guest_heartbeat(CP) > srcBefore && H.hv_guest_heartbeat(CLONE) > cloneBefore,
+     'original remains usable and clone progresses independently');
+
+  /* Fill the fixed physical/partition budget until a clone is refused. */
+  const extra = [];
+  let sawResourceFailure = false;
+  for (let i = 0; i < 8 && !sawResourceFailure; i++) {
+    const label = pushStr('resource clone ' + i);
+    const x = H.hv_ckpt_clone(cp3, label.p, label.n);
+    if (!x) sawResourceFailure = H.hv_ckpt_last_status() === 4 || H.hv_ckpt_last_status() === S_CK_LIMIT;
+    else extra.push(x);
+  }
+  ok(sawResourceFailure, 'insufficient fixed memory or table capacity is explicit', H.hv_ckpt_last_status());
+  extra.forEach((id) => H.hv_partition_delete(id));
+  H.hv_partition_stop(CP); H.hv_partition_stop(CLONE);
+  H.hv_partition_delete(CP); H.hv_partition_delete(CLONE);
+}
 
 /* ---- 22. hypervisor log ------------------------------------------------- */
 {
