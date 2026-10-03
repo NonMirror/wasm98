@@ -550,6 +550,7 @@
     ['Power Management', 'power', function () { W98.launch('power'); }],
     ['Regional Settings', 'regional', function () { W98.launch('regional'); }],
     ['Sounds', 'sounds', function () { W98.launch('sounds'); }],
+    ['System Restore', 'system', function () { W98.launch('restore'); }],
     ['System', 'system', function () { W98.launch('system'); }],
     ['Users', 'users', function () { W98.launch('users'); }]
   ];

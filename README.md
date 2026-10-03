@@ -54,7 +54,7 @@ Desktop, Windows Update), Find, Help, Run, Log Off, Shut Down.
 Built-in: My Computer / Explorer, MS-DOS Prompt, Control Panel (Display,
 System, Date/Time, Sounds, Mouse, Keyboard, Add/Remove Programs, Fonts,
 Modems, Network, Multimedia, Power, Regional, Users, Accessibility, Internet
-Options, Game Controllers, Add New Hardware, Taskbar & Start Menu, Folder
+Options, Game Controllers, Add New Hardware, System Restore, Taskbar & Start Menu, Folder
 Options), Task Manager, Recycle Bin, Run, Find: All Files, Windows Help,
 WinVer, Internet Explorer (offline, renders local pages), Notepad, Calculator,
 Character Map, Media Player, Paint, Minesweeper, Solitaire, FreeCell, JezzBall,
@@ -80,6 +80,10 @@ Things that really work, end to end:
   folders on the desktop or in Explorer, delete them into the Recycle Bin,
   rename, drag icons around (positions are remembered), open them in Notepad /
   Paint / Media Player / Explorer by extension.
+* **System Restore** — create named restore points, inspect and delete them,
+  restore a point after confirmation, and export/import versioned snapshot JSON
+  files. See [SNAPSHOT_FORMAT.md](SNAPSHOT_FORMAT.md) for the envelope and
+  compatibility rules.
 * **Screen savers** — Windows 98 logo, Mystify, Starfield, Flying Windows, with
   the idle timeout from Display Properties; Ctrl+Alt+Del opens the Close
   Program dialog; `CRASH98` in the Run box panics the kernel and shows the blue
@@ -139,11 +143,12 @@ applications) is original code.
     tools/build_kernel.sh    build + tools/kernel_test.mjs (478 checks)
     tools/serve.py           static server with the COOP/COEP headers WASM wants
     web/index.html           loads the kernel, the shell and the apps
-    web/js/kernel.js         syscall glue + snapshot persistence (IndexedDB)
+    web/js/kernel.js         syscall glue + automatic snapshot persistence (IndexedDB)
+    web/js/snapshot.js       named System Restore points and import/export
     web/js/shell.js          window manager, menus, dialogs, sounds, W98 API
     web/js/desk.js           desktop, taskbar, Start menu, tray, boot, savers
     web/js/icons.js          icon set (authentic assets if present, else drawn)
-    web/js/apps/*.js         one file per application
+    web/js/apps/*.js         one file per application, including System Restore
     web/assets/              authentic assets (icons, cursors, sounds, wallpapers)
     web/games/dos/           self-hosted DOS game bundles + manifest
     CONTRACT.md              the API every application is written against
