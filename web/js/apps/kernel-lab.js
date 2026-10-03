@@ -39,6 +39,13 @@
   function num(v) {
     return v === undefined || v === null ? NOT_EXPOSED : String(v);
   }
+  function field(obj, names) {
+    if (!obj) return undefined;
+    for (var i = 0; i < names.length; i++) {
+      if (obj[names[i]] !== undefined && obj[names[i]] !== null) return obj[names[i]];
+    }
+    return undefined;
+  }
   function hex(v, width) {
     if (v === undefined || v === null || v === '') return NOT_EXPOSED;
     var s = (Number(v) >>> 0).toString(16).toUpperCase();
@@ -87,6 +94,7 @@
   function link(label, action) { return { label: String(label), action: action }; }
   function line(value) { return { text: String(value === undefined ? '' : value) }; }
   function bounded(arr, n) { return (arr || []).slice(0, n || MAX_LINES); }
+  function tailBounded(arr, n) { arr = arr || []; n = n || MAX_LINES; return arr.slice(Math.max(0, arr.length - n)); }
 
   function processList() {
     var ps = safe(function () { return typeof W98.kernelProcs === 'function' ? W98.kernelProcs() : []; }, []);
@@ -196,6 +204,12 @@
       'ready depth         : ' + num(e.readyDepth),
       'dispatcher waits    : ' + num(e.waits) + ' (timeouts ' + num(e.waitTimeouts) + ')',
       'context switches    : ' + num(e.switches),
+      'mutants held        : ' + num(e.mutantsHeld),
+      'DPC queued/drained  : ' + num(e.dpcQueued) + ' / ' + num(e.dpcDrained),
+      'APC queued/delivered: ' + num(e.apcQueued) + ' / ' + num(e.apcDelivered),
+      'priority boosts     : ' + num(e.boosts),
+      'aging passes        : ' + num(e.aging),
+      'IRQL violations     : ' + num(e.irqlViolations),
       'per-thread records  : ' + NOT_EXPOSED
     ).map(line);
   }
@@ -205,6 +219,10 @@
       'total handles       : ' + (e ? num(e.handles) : NOT_EXPOSED),
       'access checks       : ' + (e ? num(e.accessChecks) : NOT_EXPOSED),
       'access denied       : ' + (e ? num(e.accessDenies) : NOT_EXPOSED),
+      'access granted      : ' + (e ? num(field(e, ['accessGrants', 'grants'])) : NOT_EXPOSED),
+      'audit successes     : ' + (e ? num(field(e, ['auditSuccess', 'audit successes'])) : NOT_EXPOSED),
+      'audit failures      : ' + (e ? num(field(e, ['auditFailure', 'audit failures'])) : NOT_EXPOSED),
+      'tokens              : ' + (e ? num(e.tokens) : NOT_EXPOSED),
       'per-handle records  : ' + NOT_EXPOSED
     ).map(line);
   }
@@ -225,6 +243,9 @@
       'paged pool peak     : ' + (e ? num(e.poolPagedPeak) : NOT_EXPOSED),
       'nonpaged pool       : ' + (e ? num(e.poolNonpaged) : NOT_EXPOSED),
       'nonpaged pool peak  : ' + (e ? num(e.poolNonpagedPeak) : NOT_EXPOSED),
+      'commit charge/limit : ' + (e ? num(e.commitCharge) + ' / ' + num(e.commitLimit) : NOT_EXPOSED),
+      'commit peak/fails   : ' + (e ? num(e.commitPeak) + ' / ' + num(e.commitFails) : NOT_EXPOSED),
+      'page faults         : ' + (e ? num(e.pageFaults) : NOT_EXPOSED),
       'pool allocations    : ' + NOT_EXPOSED
     ).map(line);
   }
@@ -236,6 +257,7 @@
       'failed              : ' + (e ? num(e.irpFailed) : NOT_EXPOSED),
       'cancelled           : ' + (e ? num(e.irpCancelled) : NOT_EXPOSED),
       'stack overflows     : ' + (e ? num(e.irpOverflow) : NOT_EXPOSED),
+      'IRQL violations     : ' + (e ? num(e.irqlViolations) : NOT_EXPOSED),
       'individual IRPs     : ' + NOT_EXPOSED
     ).map(line);
   }
@@ -245,6 +267,8 @@
       'objects             : ' + (e ? num(e.objects) : NOT_EXPOSED),
       'object peak         : ' + (e ? num(e.objectPeak) : NOT_EXPOSED),
       'deletions           : ' + (e ? num(e.objectDeletes) : NOT_EXPOSED),
+      'sections            : ' + (e ? num(e.sections) : NOT_EXPOSED),
+      'VM regions          : ' + (e ? num(e.vmRegions) : NOT_EXPOSED),
       'named object tree   : ' + NOT_EXPOSED,
       'per-object records  : ' + NOT_EXPOSED
     ).map(line);
@@ -257,6 +281,9 @@
       out.push(line(text(v.path) + ' | ' + (v.name === '' ? '(Default)' : text(v.name)) + ' = ' + (v.value === '' ? '(empty string)' : text(v.value))));
     });
     out.push(line('Shown ' + r.rows.length + ' matches; scanned ' + r.scanned + ' entries; total: ' + num(r.count) + '.'));
+    var e = execApi();
+    if (e) out.push(line('Hive keys/values     : ' + num(e.hiveKeys) + ' / ' + num(e.hiveValues) + ' (depth ' + num(e.hiveDepth) + ')'));
+    if (e) out.push(line('Hive quota/skips     : ' + num(e.hiveQuota) + ' / ' + num(e.hiveSkips) + ' | transactions committed/rolled back: ' + num(e.txCommitted) + ' / ' + num(e.txRolledBack)));
     if (r.truncated) out.push(line('[Enumeration bounded: at most ' + MAX_REGISTRY + ' matches / ' + MAX_SCAN + ' entries per command.]'));
     return out;
   }
@@ -274,6 +301,8 @@
       });
     }
     if (!Array.isArray(vps)) vps = null;
+    var hs = hvCall(h, ['stats'], [], {});
+    out.push(line('Hyper-V: partitions=' + num(field(hs, ['partitions'])) + ' VPs=' + num(field(hs, ['vps'])) + ' hypercalls=' + num(field(hs, ['hypercalls'])) + ' SLAT faults=' + num(field(hs, ['slatFaults']))));
     out.push(line('id   Name                         State       VPs   Memory       Mapped pages'));
     out.push(line('--------------------------------------------------------------------------------'));
     if (!ps.length) out.push(line('(no partitions)'));
@@ -282,7 +311,7 @@
       var row = line('');
       var vpCount = p.vpCount;
       if (vpCount === undefined) vpCount = Array.isArray(p.vps) ? p.vps.length : p.vps;
-      row.parts = [link(String(p.id), function () { return partitionDetails(p, vps); }), line('   ' + name + '  ' + text(p.stateName || PART_STATE[p.state]) + '  ' + num(vpCount) + '   ' + num(p.memoryBytes) + '   ' + num(p.mappedPages))];
+      row.parts = [link(String(p.id), function () { return partitionDetails(p, vps, h); }), line('   ' + name + '  ' + text(p.stateName || PART_STATE[p.state]) + '  ' + num(vpCount) + '   ' + num(p.memoryBytes) + '   ' + num(p.mappedPages))];
       out.push(row);
       (vps || []).slice(0, MAX_RECORDS).filter(function (v) { return v.partition === p.id; }).forEach(function (v) {
         out.push({ text: '       VP ' + v.index + '  ', parts: [line('       VP ' + v.index + '  '), link('id=' + v.id, function () { return vpDetails(v); })] });
@@ -290,13 +319,42 @@
     });
     return out;
   }
-  function partitionDetails(p, vps) {
+  function partitionDetails(p, vps, h) {
     var vpCount = p.vpCount;
     if (vpCount === undefined) vpCount = Array.isArray(p.vps) ? p.vps.length : p.vps;
     var out = lines('Partition details', 'id          : ' + num(p.id), 'name        : ' + text(p.name),
       'state       : ' + text(p.stateName === undefined ? PART_STATE[p.state] : p.stateName),
       'vps         : ' + num(vpCount), 'memory bytes: ' + num(p.memoryBytes), 'mapped pages: ' + num(p.mappedPages),
-      'hypercalls  : ' + num(p.hypercalls), 'faults      : ' + num(p.faults), 'runs        : ' + num(p.runs)).map(line);
+      'mapped bytes: ' + num(p.mappedBytes), 'deposits    : ' + num(p.deposits),
+      'hypercalls  : ' + num(p.hypercalls), 'faults      : ' + num(p.faults), 'runs        : ' + num(p.runs),
+      'root/parent : ' + (p.isRoot === undefined && p.root === undefined ? NOT_EXPOSED : ((p.isRoot || p.root) ? 'yes' : 'no')) + ' / ' + num(p.parent), 'canary faults: ' + num(p.canaryFaults),
+      'channel     : ' + num(p.channel)).map(line);
+    var guest = hvCall(h, ['guest', 'guestFields'], [p.id], null);
+    if (!guest) out.push(line('Guest state   : ' + NOT_EXPOSED));
+    else {
+      out.push(line('Guest stage   : ' + text(field(guest, ['stageName', 'stage'])) + ' (' + num(guest.stage) + ')'));
+      out.push(line('Guest heartbeat: ' + num(guest.heartbeat) + ' | booted: ' + (guest.booted === undefined ? NOT_EXPOSED : (guest.booted ? 'yes' : 'no'))));
+      out.push(line('Guest timer/VMBus: ' + num(guest.timerHits) + ' / ' + num(guest.vmbusMessages) + ' | commands: ' + num(guest.commands)));
+      out.push(line('Guest halted/channel: ' + (guest.halted === undefined ? NOT_EXPOSED : (guest.halted ? 'yes' : 'no')) + ' / ' + num(guest.channel) + ' | error: ' + text(guest.error)));
+      if (guest.log) {
+        out.push(line('Guest log (tail):'));
+        tailBounded(String(guest.log).split('\n'), 12).forEach(function (x) { out.push(line(x)); });
+      }
+    }
+    var map = hvCall(h, ['memoryMap'], [p.id], null);
+    if (!Array.isArray(map)) out.push(line('SLAT map     : ' + NOT_EXPOSED));
+    else {
+      var mapped = 0, writable = 0, present = 0;
+      map.forEach(function (r) { var pages = Number(r.pages) || 0; if (r.mapped) mapped += pages; if (r.writable) writable += pages; if (r.present) present += pages; });
+      out.push(line('SLAT ranges  : ' + map.length + ' | mapped/present/writable pages: ' + mapped + ' / ' + present + ' / ' + writable));
+    }
+    var synic = hvCall(h, ['synic'], [p.id], null);
+    if (!synic) out.push(line('SynIC        : ' + NOT_EXPOSED));
+    else {
+      out.push(line('SynIC ctl/SIMP/SIEFP/EOM: ' + num(synic.scontrol) + ' / ' + num(synic.simp) + ' / ' + num(synic.siefp) + ' / ' + num(synic.eom)));
+      out.push(line('SynIC messages/dropped/events/queued: ' + num(synic.messages) + ' / ' + num(synic.dropped) + ' / ' + num(synic.events) + ' / ' + num(synic.queued)));
+      if (Array.isArray(synic.sints)) out.push(line('SINTs        : ' + synic.sints.map(function (s) { return 'v' + num(s.vector) + (s.masked ? ' masked' : ' unmasked') + '/' + num(s.count); }).join(', ')));
+    }
     if (!vps) out.push(line('VP records: ' + NOT_EXPOSED));
     else vps.slice(0, MAX_RECORDS).filter(function (v) { return v.partition === p.id; }).forEach(function (v) {
       out.push({ parts: [link('VP ' + v.index + ' (id ' + v.id + ')', function () { return vpDetails(v); })] });
@@ -304,7 +362,11 @@
     return out;
   }
   function vpDetails(v) {
-    return lines('Virtual processor details', 'id          : ' + num(v.id), 'partition   : ' + num(v.partition), 'index       : ' + num(v.index), 'state       : ' + text(v.stateName), 'run time    : ' + num(v.runMs) + ' ms', 'hypercalls  : ' + num(v.hypercalls), 'faults      : ' + num(v.faults), 'instructions: ' + num(v.instr), 'preempts    : ' + num(v.preempts)).map(line);
+    var out = lines('Virtual processor details', 'id          : ' + num(v.id), 'partition   : ' + num(v.partition), 'index       : ' + num(v.index), 'state       : ' + text(v.stateName), 'run time    : ' + num(v.runMs) + ' ms', 'hypercalls  : ' + num(v.hypercalls), 'faults      : ' + num(v.faults), 'instructions: ' + num(v.instr), 'preempts    : ' + num(v.preempts), 'timer fires : ' + num(v.timerFires)).map(line);
+    if (v.timer) out.push(line('timer       : fires=' + num(v.timer.fires) + ' last=' + num(v.timer.last) + ' pending=' + num(v.timer.pending) + ' armed=' + (v.timer.armed === undefined ? NOT_EXPOSED : (v.timer.armed ? 'yes' : 'no')) + ' masked=' + num(v.timer.masked)));
+    if (v.synic) out.push(line('SynIC       : messages=' + num(v.synic.messages) + ' dropped=' + num(v.synic.dropped) + ' events=' + num(v.synic.events) + ' queued=' + num(v.synic.queued)));
+    if (Array.isArray(v.sints)) out.push(line('SINTs       : ' + v.sints.map(function (s) { return 'v' + num(s.vector) + (s.masked ? ' masked' : ' unmasked') + '/' + num(s.count); }).join(', ')));
+    return out;
   }
   function renderVmbus() {
     var h = hvApi(), out = lines('!vmbus  (kernel transport and Hyper-V channels)'), ks = execApi();
@@ -321,7 +383,16 @@
     out.push(line('hypervisor channels : ' + num(s.channels === undefined ? (ch ? ch.length : undefined) : s.channels)));
     out.push(line('channel messages    : ' + num(s.messages === undefined ? s.channelMessages : s.messages)));
     out.push(line('dropped             : ' + num(s.dropped === undefined ? s.channelDropped : s.dropped)));
-    (ch || []).slice(0, MAX_RECORDS).forEach(function (c) { out.push(line('channel ' + num(c.id || c.slot) + ' partition=' + num(c.partition) + ' state=' + text(c.stateName || c.state) + ' in=' + num(c.inBytes) + ' out=' + num(c.outBytes))); });
+    out.push(line('bytes in/out        : ' + num(s.inBytes) + ' / ' + num(s.outBytes) + ' | open: ' + num(s.open)));
+    out.push(line('Channel IDs are live values; the slot is only an enumeration position.'));
+    (ch || []).slice(0, MAX_RECORDS).forEach(function (c) {
+      out.push(line('channel id=' + num(c.id) + ' slot=' + num(c.slot) + ' partition=' + num(c.partition) + ' state=' + text(c.stateName || c.state) + ' in=' + num(c.inBytes) + ' out=' + num(c.outBytes) + ' messages=' + num(c.messages) + ' dropped=' + num(c.dropped)));
+    });
+    var hlog = hvCall(h, ['hypervisorLog', 'log'], [], '');
+    if (hlog) {
+      out.push(line(''), line('Hypervisor log (tail):'));
+      tailBounded(String(hlog).split('\n'), 40).forEach(function (x) { out.push(line(x)); });
+    } else out.push(line('Hypervisor log     : ' + NOT_EXPOSED));
     return out;
   }
   function parseBugcheck(dump) {

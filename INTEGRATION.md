@@ -30,10 +30,10 @@ state.
 | Kernel Lab view | Public source |
 | --- | --- |
 | `!process` | `W98.kernelProcs()` and `W98.stats()` |
-| `!thread`, `!handle`, `!timer`, `!pool`, `!irp`, `!object` | `W98.exec()` executive snapshot |
-| `!registry` | `W98.regEnum(index)` |
-| `!partition` | `W98.hv`/`W98HV` partition and VP accessors when exposed |
-| `!vmbus` | `W98.vmbusStats()` and the hypervisor VMBus surface when exposed |
+| `!thread`, `!handle`, `!timer`, `!pool`, `!irp`, `!object` | `W98.exec()` executive snapshot, including expanded dispatcher, memory-manager, security, and object counters when exposed |
+| `!registry` | `W98.regEnum(index)` and exposed hive/transaction counters |
+| `!partition` | `W98.hv`/`W98HV` partition, guest, VP, SynIC, and `memoryMap` (SLAT) accessors when exposed |
+| `!vmbus` | `W98.vmbusStats()` and the hypervisor VMBus/channel, statistics, and log surfaces when exposed |
 | `!bugcheck` and crash-lab log | `W98.logText()` when provided by the host, otherwise `W98.kernelLog()`/`W98.kernel.logText()`, plus `W98.exec().bugcheckDump()` or `W98.hv.bugcheck()` and exposed bugcheck fields |
 
 `W98.tick()` is used for timestamps and refresh scheduling.  Hypervisor values
@@ -41,6 +41,12 @@ are read conditionally: a build without `W98.hv` or `W98HV`, or with a
 hypervisor whose mode is not `wasm`, is reported as unavailable.  Individual
 fields that an API does not expose are shown as **not exposed by this build**;
 Kernel Lab never substitutes a guessed value.
+
+Partition and channel identifiers come from live records returned by the
+high-level API.  The app does not synthesize a dense ID range or use an
+enumeration slot as an ID.  Registry enumeration remains compatible with the
+loader's `KREG3` snapshot format, which continues to accept `KREG1` and
+`KREG2` data.
 
 ## Read-only and crash-lab rules
 
