@@ -28,6 +28,7 @@ typedef uint8_t  u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef int32_t  i32;
+typedef uint64_t u64;
 
 /* ------------------------------------------------------------- GPA layout */
 #define G_HC_GPA     0x0000E000u     /* hypercall page                        */
@@ -119,6 +120,7 @@ extern u32  hv_message_pop(u32 vp, u32 dst, u32 max);
 extern u32  hv_timer_set(u32 vp, u32 sint, u32 period_ms, u32 oneshot);
 extern u32  hv_guest_timer_take(u32 part);
 extern void hv_guest_log(u32 part, const char *s);
+extern u32  hv_debug_partition_index(u32 part);
 
 /* guest_field indices (HV_ABI.md internal API used by hv.c and hv.js) */
 #define GF_STAGE       0u
@@ -261,6 +263,8 @@ typedef struct {
     u32 fb_cursor;
     u32 fb_lines;
     u32 reftime;
+    u32 tsc_lo;
+    u32 tsc_hi;
     u32 vpidx;
     u32 osid;
     u32 lines;
@@ -269,6 +273,13 @@ typedef struct {
 } GState;
 
 static GState GS[MAX_PARTS];
+
+static u32 guest_slot(u32 part) {
+    u32 valid = hv_debug_partition_index(part);
+    u32 slot = valid & 0xFFu;
+    if (!valid || !slot || slot > MAX_PARTS) return MAX_PARTS;
+    return slot - 1u;
+}
 
 /* ------------------------------------------------------------ tiny strings */
 typedef struct { char *buf; u32 len; u32 cap; } Sb;
@@ -528,6 +539,8 @@ static u32 gstep(GState *g) {
     case GS_TIME: {
         char line[LINE_LEN];
         Sb s;
+        u32 page[4];
+        u64 tsc;
         if (gcall(g, C_GET_REF_TIME, 0, G_OUTBUF, 0, 0, 0, 0) != 0u) {
             glog(g, "FATAL: HvCallGetReferenceTime failed"); g->error = 5; set_stage(g, GS_FAILED); return 2;
         }
@@ -537,6 +550,15 @@ static u32 gstep(GState *g) {
         sb_num(&s, g->reftime);
         sb_str(&s, " ms");
         glog(g, line);
+        if (gcall(g, C_QUERY_MSR, 0, G_OUTBUF, M_REFERENCE_TSC, 0, 0, 0) != 0u ||
+            !hv_g_load(g->part, gout(g, 0) & ~1u, (u32)page, 16u) || !page[1]) {
+            glog(g, "FATAL: reference TSC page unavailable"); g->error = 15; set_stage(g, GS_FAILED); return 2;
+        }
+        tsc = (u64)g->reftime * 10000ULL * (u64)page[1] + (((u64)page[3] << 32) | page[2]);
+        g->tsc_lo = (u32)tsc; g->tsc_hi = (u32)(tsc >> 32);
+        sb_init(&s, line, LINE_LEN);
+        sb_str(&s, "reference TSC page seq "); sb_num(&s, page[0]);
+        sb_str(&s, " value "); sb_hex(&s, g->tsc_lo, 8u); glog(g, line);
         g->boot_flags |= BF_REFTIME;
         set_stage(g, GS_VPIDX);
         return 0;
@@ -749,9 +771,9 @@ static u32 gstep(GState *g) {
 u32 guest_run(u32 part, u32 vp, u32 budget);
 u32 guest_run(u32 part, u32 vp, u32 budget) {
     GState *g;
-    u32 n = 0;
-    if (part < 1u || part > MAX_PARTS) return 0;
-    g = &GS[part - 1u];
+    u32 n = 0, slot = guest_slot(part);
+    if (slot >= MAX_PARTS) return 0;
+    g = &GS[slot];
     g->vp = vp;
     while (n < budget) {
         u32 r;
@@ -765,9 +787,9 @@ u32 guest_run(u32 part, u32 vp, u32 budget) {
 void guest_reset(u32 part, u32 vp);
 void guest_reset(u32 part, u32 vp) {
     GState *g;
-    u32 i, j;
-    if (part < 1u || part > MAX_PARTS) return;
-    g = &GS[part - 1u];
+    u32 i, j, slot = guest_slot(part);
+    if (slot >= MAX_PARTS) return;
+    g = &GS[slot];
     /* wipe the whole state without libc */
     {
         u8 *p = (u8 *)g;
@@ -781,14 +803,23 @@ void guest_reset(u32 part, u32 vp) {
 }
 void guest_timer_fire(u32 part);
 void guest_timer_fire(u32 part) {
-    if (part < 1u || part > MAX_PARTS) return;
+    if (guest_slot(part) >= MAX_PARTS) return;
     /* interrupt delivery is modelled as a pending count consumed by the guest */
+}
+void guest_checkpoint_restore(u32 part, u32 stage, u32 heartbeat);
+void guest_checkpoint_restore(u32 part, u32 stage, u32 heartbeat) {
+    u32 slot = guest_slot(part);
+    if (slot >= MAX_PARTS) return;
+    GS[slot].stage = stage;
+    GS[slot].heartbeat = heartbeat;
+    GS[slot].halted = 0u;
 }
 u32 guest_field(u32 part, u32 f);
 u32 guest_field(u32 part, u32 f) {
     GState *g;
-    if (part < 1u || part > MAX_PARTS) return 0;
-    g = &GS[part - 1u];
+    u32 slot = guest_slot(part);
+    if (slot >= MAX_PARTS) return 0;
+    g = &GS[slot];
     switch (f) {
     case GF_STAGE: return g->stage;
     case GF_BOOT_FLAGS: return g->boot_flags;
@@ -805,6 +836,8 @@ u32 guest_field(u32 part, u32 f) {
     case 12: return g->osid;
     case 13: return g->error;
     case 14: return g->lines;
+    case 15: return g->tsc_lo;
+    case 16: return g->tsc_hi;
     default: return 0;
     }
 }
@@ -812,9 +845,9 @@ u32 guest_stage_name(u32 part);      /* unused by JS, handy in the debugger */
 u32 guest_stage_name(u32 part) {
     static const char *names[13] = { "reset", "cpuid", "osid", "hypercall", "time",
         "vpindex", "synic", "timer", "vmbus", "framebuffer", "run", "redraw", "failed" };
-    u32 st;
-    if (part < 1u || part > MAX_PARTS) return 0;
-    st = GS[part - 1u].stage;
+    u32 st, slot = guest_slot(part);
+    if (slot >= MAX_PARTS) return 0;
+    st = GS[slot].stage;
     if (st > 12u) st = 12u;
     return (u32)(uintptr_t)names[st];
 }
