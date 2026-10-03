@@ -12,29 +12,27 @@ continue through `W98Kernel.capturePersistentState()` and
 
 ## Event Viewer and Performance Monitor
 
-The two diagnostic applications are classic scripts. Load them after
-`js/kernel.js`, `js/shell.js`, and `js/hv.js`, and before `js/desk.js`:
+Load `js/apps/eventviewer.js` and `js/apps/perfmon.js` after the kernel, shell,
+and hypervisor scripts and before `js/desk.js`. Each registers once in the
+`System Tools` Start-menu group. They are read-only, use bounded polling of the
+public `W98`/`W98HV` surfaces, and tolerate a missing kernel or hypervisor.
 
-```html
-<script src="js/apps/eventviewer.js"></script>
-<script src="js/apps/perfmon.js"></script>
-```
+## Device Manager
 
-Each file registers once with `W98.registerApp`; both use the `System Tools`
-Start-menu group. They are read-only and tolerate either a missing kernel image
-or an unavailable hypervisor. They poll bounded snapshots from the documented
-`W98` and `W98HV` surfaces, retain a fixed-size event ring/series, and never
-mutate kernel state or create a second telemetry ABI.
-
-The applications read `W98.tick()`, `W98.stats()`, `W98.kernelProcs()`,
-`W98.kernelLog()`/`W98.logText()`, optional registry/executive counters, and
-optional hypervisor partitions, VPs, VMBus, guest, and log data. Missing
-optional methods render as unavailable values. Save View uses a local browser
-download only.
+`js/devices.js` is a support module loaded after `hv.js`, and
+`js/apps/devmgr.js` is loaded after it and before `desk.js`. Device Manager is a
+classic `W98.registerApp` application in `System Tools`. It models bounded
+virtual hardware and persists lifecycle, resource, and view state under
+`HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Enum` and the Device Manager
+software key. It never probes or changes host hardware. Disable/enable, remove,
+rescan, the local driver wizard, resource-conflict fixture, and bounded virtual
+handle refusal remain usable in shim mode and when Hyper-V is unavailable.
 
 Validation:
 
 ```sh
 node --check web/js/apps/eventviewer.js
 node --check web/js/apps/perfmon.js
+node --check web/js/apps/devmgr.js
+node --check web/js/devices.js
 ```
