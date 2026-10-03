@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "W98 Company Intranet",
+  "host": "intranet.w98.local",
+  "pages": [
+    "welcome.html",
+    "directory.html",
+    "help.html",
+    "status.html",
+    "files.html",
+    "bulletin.html",
+    "search.html"
+  ],
+  "note": "Fixtures are embedded by web/js/local-intranet.js; this manifest documents the matching local catalog."
+}
