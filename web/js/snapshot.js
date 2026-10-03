@@ -1,7 +1,7 @@
 /* ============================================================================
    snapshot.js — user restore points
 
-   Restore points contain only the persistent kernel image (KFS1 + KREG1/2).
+   Restore points contain only the persistent kernel image (KFS1 + KREG1/2/3).
    The kernel owns those encodings; this module stores and validates the opaque
    images in a versioned envelope and keeps them separate from automatic boot
    records.  No live windows, timers, processes, or JavaScript closures are
@@ -115,7 +115,7 @@
     var lines = value.replace(/\r/g, '').split('\n');
     var hdr = lines.shift();
     if (which === 'filesystem' && hdr !== 'KFS1') throw fail('unsupported', 'Unsupported filesystem image');
-    if (which === 'registry' && hdr !== 'KREG1' && hdr !== 'KREG2') throw fail('unsupported', 'Unsupported registry image');
+    if (which === 'registry' && hdr !== 'KREG1' && hdr !== 'KREG2' && hdr !== 'KREG3') throw fail('unsupported', 'Unsupported registry image');
     /* Validate record framing and base64 without recreating kernel state. */
     lines.forEach(function (line) {
       if (!line) return;
@@ -133,11 +133,11 @@
         if (decoded !== size) throw fail('malformed', 'Filesystem image data length does not match its record');
       } else {
         var r = line.split('\t');
-        if (hdr === 'KREG2') {
+        if (hdr === 'KREG2' || hdr === 'KREG3') {
           if (r.length < 4 || !r[0] || !r[1] || !/^\d+$/.test(r[2])) throw fail('malformed', 'Malformed registry image record');
           r = [r[0], r[1], r[2], r.slice(3).join('\t')];
         } else if (r.length < 2 || !r[0]) throw fail('malformed', 'Malformed registry image record');
-        var b = hdr === 'KREG2' ? r[3] : (r.length > 2 ? r.slice(2).join('\t') : '');
+        var b = (hdr === 'KREG2' || hdr === 'KREG3') ? r[3] : (r.length > 2 ? r.slice(2).join('\t') : '');
         if (b && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b)) throw fail('malformed', 'Malformed registry image data');
       }
     });
@@ -153,6 +153,7 @@
     if (!Number.isInteger(o.version) || o.version < 1) throw fail('malformed', 'Malformed snapshot version');
     if (o.version > VERSION) throw fail('future-version', 'Snapshot version ' + o.version + ' is newer than this build supports');
     if (typeof o.name !== 'string' || !o.name.trim() || o.name.length > 200) throw fail('malformed', 'Malformed restore point name');
+    if (o.id !== undefined && (typeof o.id !== 'string' || !o.id.trim() || o.id.length > 200)) throw fail('malformed', 'Malformed snapshot identity');
     if (o.description !== undefined && typeof o.description !== 'string') throw fail('malformed', 'Malformed restore point description');
     if (typeof o.createdAt !== 'string' || isNaN(Date.parse(o.createdAt))) throw fail('malformed', 'Malformed restore point timestamp');
     if (!o.state || typeof o.state !== 'object' || Array.isArray(o.state)) throw fail('malformed', 'Snapshot state is missing');

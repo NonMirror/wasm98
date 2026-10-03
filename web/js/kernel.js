@@ -395,14 +395,41 @@
     var regBlob = readText(wasm.k_tmp_ptr(), n);
     return { fs: fsBlob, reg: regBlob };
   }
+  function resetWasmForPersistentRestore() {
+    /* k_fs_load replaces the user tree, but the registry loader intentionally
+       accepts legacy images into an already initialized hive.  Reinitialize
+       the kernel first so keys and values absent from the restore point cannot
+       survive the operation.  The desktop reloads immediately afterwards. */
+    timerCbs.clear();
+    wasm.k_init((Date.now() ^ 0x1998) >>> 0);
+    if (typeof wasm.k_seed === 'function') wasm.k_seed((Date.now() & 0x7fffffff) >>> 0);
+  }
+  function clearRegistryValuesWasm() {
+    var entries = [], i, n = wasm.k_reg_enum_count();
+    for (i = 0; i < n; i++) {
+      if (wasm.k_reg_enum(i) !== 1) continue;
+      entries.push({
+        path: readText(wasm.k_reg_enum_path_ptr(), wasm.k_reg_enum_path_len()),
+        name: readText(wasm.k_reg_enum_name_ptr(), wasm.k_reg_enum_name_len())
+      });
+    }
+    entries.forEach(function (entry) {
+      var path = pushText(entry.path), name = pushText(entry.name);
+      try { wasm.k_reg_del(path.p, path.n, name.p, name.n); }
+      finally { wasm.k_free(path.p); wasm.k_free(name.p); }
+    });
+  }
   function replacePersistentStateWasm(state) {
     if (!wasm || !state) return 0;
-    var count = 0, a = pushText(state.fs), b = pushText(state.reg);
+    var count = 0, a, b;
     try {
+      resetWasmForPersistentRestore();
+      clearRegistryValuesWasm();
+      a = pushText(state.fs); b = pushText(state.reg);
       count += wasm.k_fs_load(a.p, a.n);
       count += wasm.k_reg_load(b.p, b.n);
     } finally {
-      wasm.k_free(a.p); wasm.k_free(b.p);
+      if (a) wasm.k_free(a.p); if (b) wasm.k_free(b.p);
     }
     /* Persist the replaced state immediately.  This is deliberately separate
        from the ordinary dirty timer: a subsequent reload must see the point
@@ -530,14 +557,18 @@
         nf.set(path, data); nd.add(parent(path));
       });
       var regHeader = regLines.shift();
-      if (regHeader !== 'KREG1' && regHeader !== 'KREG2') throw new Error('unsupported registry image');
+      if (regHeader !== 'KREG1' && regHeader !== 'KREG2' && regHeader !== 'KREG3') throw new Error('unsupported registry image');
       var nr = new Map();
       regLines.forEach(function (line) {
         if (!line) return;
         var p = line.split('\t');
         var data;
-        if (regHeader === 'KREG2') {
+        if (regHeader === 'KREG2' || regHeader === 'KREG3') {
           if (p.length < 4 || !p[0]) throw new Error('malformed registry image');
+          /* KREG3 carries application-hive declarations.  The shim has no
+             separate hive implementation, so consume those records while
+             retaining the ordinary value records that share the KREG2 frame. */
+          if (regHeader === 'KREG3' && p[0] === '@APP') return;
           data = b64Decode(p.slice(3).join('\t'));
         } else {
           if (p.length < 3 || !p[0]) throw new Error('malformed registry image');

@@ -15,7 +15,7 @@ An exported snapshot is UTF-8 JSON with this top-level shape:
   "description": "Optional note shown in System Restore",
   "state": {
     "fs": "KFS1 ...",
-    "reg": "KREG1 ..."
+    "reg": "KREG3 ..."
   }
 }
 ```
@@ -26,9 +26,17 @@ ISO-8601 timestamp supplied by the creator. `name` is the user-visible restore
 point name; `description` may be an empty string.  Names are unique within a
 browser profile.  The state object contains the kernel's own serialized images:
 
+The optional `id` is an opaque restore-point identity assigned by the profile
+that created it.  A reader rejects a present identity with the wrong type or an
+empty value.  Import never reuses that identity: it assigns a new local id so
+the imported point cannot overwrite a point in the destination profile.
+
 * `state.fs` is the line-oriented `KFS1` filesystem image.
-* `state.reg` is the registry hive image emitted by the kernel (`KREG1` and
-  newer `KREG2` images are accepted so existing data remains compatible).
+* `state.reg` is the registry hive image emitted by the kernel.  Current
+  kernels emit `KREG3`; readers also accept legacy `KREG1` and `KREG2` images
+  so existing automatic persistence and exported points remain compatible.
+  `KREG3` uses the KREG2 value framing and may include `@APP` application-hive
+  declarations before ordinary registry values.
 
 The kernel remains the sole owner of these two encodings.  Snapshot code stores
 and transports the strings and performs only defensive framing checks; it does
@@ -63,7 +71,7 @@ Creating a point serializes the current state and writes one complete record.
 Duplicate names are rejected rather than silently replacing an existing point.
 Deleting a point removes only that named record.  Restoring a point validates
 the complete envelope first, then replaces the filesystem and registry through
-the kernel's `KFS1`/`KREG1` loaders and reinitializes the desktop.  Import uses
+the kernel's `KFS1`/`KREG1`/`KREG2`/`KREG3` loaders and reinitializes the desktop.  Import uses
 the same validation path and does not write anything until validation succeeds;
 malformed, unsupported, or future-version files therefore leave current state
 untouched.

@@ -209,6 +209,14 @@ assert.deepEqual(kernel.capturePersistentState(), { fs: 'KFS1\n0|0|11|C:\\BEFORE
 const stable = kernel.capturePersistentState();
 await assert.rejects(() => importPoint(api, '{not json'), /malformed|invalid|JSON/i);
 await assert.rejects(() => importPoint(api, {
+  format: 'OTHER-SNAPSHOT', version: 1, createdAt: new Date().toISOString(),
+  name: 'wrong identity', description: '', state: stable,
+}), /unsupported|format/i);
+await assert.rejects(() => importPoint(api, {
+  format: 'W98-SNAPSHOT', version: 1, id: 17, createdAt: new Date().toISOString(),
+  name: 'bad identity', description: '', state: stable,
+}), /identity|malformed/i);
+await assert.rejects(() => importPoint(api, {
   format: 'W98-SNAPSHOT', version: 1, createdAt: new Date().toISOString(),
   name: 'malformed image', description: '',
   state: { fs: 'KFS1\n0|0|2|C:\\BROKEN|QQ==\n', reg: stable.reg },
@@ -218,6 +226,22 @@ await assert.rejects(() => importPoint(api, {
   name: 'future', description: '', state: stable,
 }), /version|unsupported|future/i);
 assert.deepEqual(kernel.capturePersistentState(), stable, 'rejected import leaves current state unchanged');
+
+// KREG1 and KREG2 remain readable, while the current KREG3 framing also
+// accepts application-hive declarations emitted by the merged kernel.
+const validFs = 'KFS1\n0|0|0|C:\\EMPTY|\n';
+assert.doesNotThrow(() => api.validate({
+  format: 'W98-SNAPSHOT', version: 1, createdAt: new Date().toISOString(),
+  name: 'legacy KREG2', state: {
+    fs: validFs,
+    reg: 'KREG2\nHKEY_CURRENT_USER\\Software\\W98\tState\t1\tdHJ1ZQ==\n',
+  },
+}));
+const kreg3 = 'KREG3\n@APP\tPaint\t1\t\nHKEY_CURRENT_USER\\Software\\W98\tState\t1\tdHJ1ZQ==\n';
+assert.doesNotThrow(() => api.validate({
+  format: 'W98-SNAPSHOT', version: 1, createdAt: new Date().toISOString(),
+  name: 'current KREG3', state: { fs: validFs, reg: kreg3 },
+}));
 
 // Export/import is a round trip into a fresh browser profile.  The envelope
 // keeps its stable id, so importing into the original profile would replace
@@ -229,9 +253,15 @@ assert.equal(envelope.version, 1);
 assert.equal(envelope.state.fs, 'KFS1\n0|0|11|C:\\BEFORE.TXT|aGVsbG8gd29ybGQ=\n');
 const fresh = loadSnapshot();
 await importPoint(fresh.api, envelope);
+await importPoint(fresh.api, {
+  format: 'W98-SNAPSHOT', version: 1, createdAt: new Date().toISOString(),
+  name: 'KREG3 point', description: 'application hive state',
+  state: { fs: validFs, reg: kreg3 },
+});
 const afterImport = await callMethod(fresh.api, ['list', 'listRestorePoints']);
-assert.equal(afterImport.length, 1);
-assert.equal(afterImport[0].name, 'Before game');
+assert.equal(afterImport.length, 2);
+assert.ok(afterImport.some(point => point.name === 'Before game'));
+assert.ok(afterImport.some(point => point.name === 'KREG3 point'));
 
 // Deletion removes only the selected point.
 const deleteKey = ['delete', 'deleteRestorePoint', 'remove'].find(k => typeof api[k] === 'function');
