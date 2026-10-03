@@ -28,6 +28,19 @@ software key. It never probes or changes host hardware. Disable/enable, remove,
 rescan, the local driver wizard, resource-conflict fixture, and bounded virtual
 handle refusal remain usable in shim mode and when Hyper-V is unavailable.
 
+## Boot recovery
+
+`js/boot-profile.js` is a classic support module loaded after `shell.js`/`hv.js`
+and before `js/apps/recovery.js`. The recovery app registers under the
+`System Tools` Start-menu group and uses only the public `W98.bootProfile` and
+`W98.launch` APIs. The integration should let `desk.js` call
+`load()`, `consumeNextProfile()`, and `runBoot()` with the ten canonical stage
+IDs (kernel initialization, filesystem/registry restore, display, input, sound,
+networking, Hyper-V integration, shell, and startup programs), then capture
+Last Known Good after a successful normal boot. Failed-startup flags and bounded
+`BOOTLOG.TXT` remain owned by the profile model; safe-command and recovery
+simulations do not alter shell internals.
+
 Validation:
 
 ```sh
@@ -35,4 +48,6 @@ node --check web/js/apps/eventviewer.js
 node --check web/js/apps/perfmon.js
 node --check web/js/apps/devmgr.js
 node --check web/js/devices.js
+node --check web/js/boot-profile.js
+node --check web/js/apps/recovery.js
 ```
