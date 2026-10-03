@@ -34,7 +34,6 @@
   function num(v) {
     return typeof v === 'number' && isFinite(v) ? v : null;
   }
-  function n0(v) { var n = num(v); return n === null ? 0 : n; }
   /* The WASM glue currently uses uppercase counter names while older test
      fixtures and the public contract use lower camel case.  Read either
      spelling so the monitor remains useful across both surfaces. */
@@ -145,7 +144,7 @@
     var ps = safe(function () { return typeof W98.kernelProcs === 'function' ? W98.kernelProcs() : []; }, []) || [];
     if (!Array.isArray(ps)) ps = [];
     var procs = ps.map(function (p) {
-      return { pid: p && p.pid != null ? p.pid : 0, name: String(p && p.name || ('PID ' + (p && p.pid || 0))), cpuUs: num(p && p.cpuUs) || 0 };
+      return { pid: p && p.pid != null ? p.pid : 0, name: String(p && p.name || ('PID ' + (p && p.pid || 0))), cpuUs: num(p && p.cpuUs) };
     });
     var hv = hvSnapshot();
     var peak = num(st.heapPeak);
@@ -205,16 +204,22 @@
     if (!procs.length) {
       ctx.fillStyle = '#c0c0c0'; ctx.font = '11px Tahoma'; ctx.textAlign = 'center'; ctx.fillText('No processes', w / 2, h / 2 + 4); return;
     }
-    var list = procs.slice().sort(function (a, b) { return b.cpuUs - a.cpuUs; }).slice(0, 8);
+    if (!procs.some(function (p) { return num(p.cpuUs) !== null; })) {
+      ctx.fillStyle = '#c0c0c0'; ctx.font = '11px Tahoma'; ctx.textAlign = 'center'; ctx.fillText('CPU data unavailable', w / 2, h / 2 + 4); return;
+    }
+    var list = procs.slice().sort(function (a, b) {
+      var av = num(a.cpuUs), bv = num(b.cpuUs);
+      return (bv === null ? -Infinity : bv) - (av === null ? -Infinity : av);
+    }).slice(0, 8);
     var max = 1, i;
-    list.forEach(function (p) { max = Math.max(max, p.cpuUs); });
+    list.forEach(function (p) { var cpuUs = num(p.cpuUs); if (cpuUs !== null) max = Math.max(max, cpuUs); });
     var rowH = Math.max(9, Math.floor((h - 4) / list.length));
     ctx.font = '10px Tahoma'; ctx.textAlign = 'left';
     list.forEach(function (p, j) {
-      var y = j * rowH + 2, bw = Math.round((p.cpuUs / max) * Math.max(20, w - 104));
+      var cpuUs = num(p.cpuUs), y = j * rowH + 2, bw = cpuUs === null ? 0 : Math.round((cpuUs / max) * Math.max(20, w - 104));
       ctx.fillStyle = '#c0c0c0'; ctx.fillText(String(p.name).slice(0, 14), 2, y + rowH - 2);
       ctx.fillStyle = '#000080'; ctx.fillRect(96, y + 1, bw, rowH - 3);
-      ctx.fillStyle = '#fff'; ctx.fillText(fmt(p.cpuUs / 1000, 1) + ' ms', 100 + bw, y + rowH - 2);
+      ctx.fillStyle = '#fff'; ctx.fillText(fmt(cpuUs === null ? null : cpuUs / 1000, 1) + ' ms', 100 + bw, y + rowH - 2);
     });
   }
 
@@ -283,7 +288,10 @@
     function render() {
       var r;
       r = rows.cpu; barsCanvas(r.canvas, last ? last.procs : []);
-      r.read.textContent = last && last.procs.length ? last.procs.slice().sort(function (a, b) { return b.cpuUs - a.cpuUs; }).slice(0, 3).map(function (p) { return p.name + ': ' + fmt(p.cpuUs / 1000, 1) + ' ms'; }).join('  ') : 'No process CPU data';
+      r.read.textContent = last && last.procs.length ? last.procs.slice().sort(function (a, b) {
+        var av = num(a.cpuUs), bv = num(b.cpuUs);
+        return (bv === null ? -Infinity : bv) - (av === null ? -Infinity : av);
+      }).slice(0, 3).map(function (p) { var cpuUs = num(p.cpuUs); return p.name + ': ' + fmt(cpuUs === null ? null : cpuUs / 1000, 1) + ' ms'; }).join('  ') : 'No process CPU data';
       r = rows.heap; lineCanvas(r.canvas, [history.heap, history.heapPeak], r.labels, r.colors, !last || history.heap.every(function (v) { return v === null; }));
       r.read.textContent = 'Used: ' + fmt(last && stat(last.st, 'HEAP_USED', 'heapUsed'), 0) + ' bytes   Peak: ' + fmt(last && last.heapPeak, 0) + ' bytes';
       r = rows.procq; lineCanvas(r.canvas, [history.processes, history.queue], r.labels, r.colors, !last);

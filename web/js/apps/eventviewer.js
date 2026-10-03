@@ -164,12 +164,17 @@
       var chans = safe(function () { return h.vmbus(); }, []);
       if (chans && chans.channels) chans = chans.channels;
       if (Array.isArray(chans)) {
-        out.vmbus = { messages: 0, dropped: 0, inBytes: 0, outBytes: 0 };
+        out.vmbus = { messages: null, dropped: null, inBytes: null, outBytes: null };
+        function addVmbus(field, value) {
+          value = number(value);
+          if (value == null) return;
+          out.vmbus[field] = out.vmbus[field] == null ? value : out.vmbus[field] + value;
+        }
         chans.forEach(function (c) {
-          out.vmbus.messages += number(c.messages) || 0;
-          out.vmbus.dropped += number(c.dropped) || 0;
-          out.vmbus.inBytes += number(c.inBytes) || 0;
-          out.vmbus.outBytes += number(c.outBytes) || 0;
+          addVmbus('messages', c.messages);
+          addVmbus('dropped', c.dropped);
+          addVmbus('inBytes', c.inBytes);
+          addVmbus('outBytes', c.outBytes);
         });
       }
     }
@@ -194,9 +199,11 @@
     var parts = null;
     if (typeof h.partitions === 'function') parts = safe(function () { return h.partitions(); }, []);
     if (!Array.isArray(parts) && typeof h.partitionList === 'function') parts = safe(function () { return h.partitionList(); }, []);
-    if (Array.isArray(parts)) parts.forEach(function (part, index) {
+    if (Array.isArray(parts)) parts.forEach(function (part) {
       var id = part && (part.id != null ? part.id : part.partition);
-      if (id == null) id = index + 1;
+      /* Partition IDs are opaque values.  If a fixture cannot provide one,
+         leave its guest heartbeat unavailable instead of guessing a slot. */
+      if (id == null) return;
       var g = null;
       if (typeof h.guestFields === 'function') g = safe(function () { return h.guestFields(id); }, null);
       if (!g && typeof h.guest === 'function') g = safe(function () { return h.guest(id); }, null);

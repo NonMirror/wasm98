@@ -6,8 +6,11 @@ add exports, mutate kernel state, or create a second timer/telemetry ABI.
 
 ## Script load order
 
-Load the applications after `js/kernel.js`, `js/shell.js`, and `js/hv.js`, and
-before `js/desk.js` builds the desktop and Start menu:
+The final integration worktree should load the applications after
+`js/kernel.js`, `js/shell.js`, and `js/hv.js`, and before `js/desk.js` builds
+the desktop and Start menu. The diagnostic feature branch leaves
+`web/index.html` under the shell integration worktree's ownership; add these
+two tags there:
 
 ```html
 <script src="js/apps/eventviewer.js"></script>
@@ -18,6 +21,10 @@ Each file is a non-module script and calls `W98.registerApp` exactly once. The
 applications can also be loaded by a test harness that supplies a compatible
 `window.W98`; no browser globals beyond the normal app contract are required at
 registration time.
+
+Both registrations use `startMenuGroup: 'System Tools'`, so the existing Start
+menu grouping will expose Event Viewer and Performance Monitor after those
+script tags are added. No Control Panel or shell-internal hook is required.
 
 ## Read-only data sources
 
@@ -31,11 +38,16 @@ returns an empty value instead of escaping an exception into the shell.
 | Kernel totals | `W98.stats()` | Current glue returns uppercase keys (`SYSCALLS`, `TICKS`, `QUEUE`, `NDESC`, `HEAP_USED`, `HEAP_SIZE`, `HEAP_FREE`, `FILES`, `BYTES`, `REG`, `FIRED`, `SWITCHES`, and so on). Adapters accept the documented lower-case aliases when a fixture supplies them. |
 | Processes | `W98.kernelProcs()` | Snapshot records include `pid`, `name`, `state`, `cpuUs`, and `started`. Process snapshots are compared between polls to report creation, exit, and state changes. |
 | Kernel text log | `W98.logText()` where supplied, otherwise `W98.kernelLog()` | The current shell exports `kernelLog`; the adapter checks both names. Log lines are treated as read-only evidence and are deduplicated by cursor. |
-| Registry | `W98.regEnum(i)` with `W98.regCount()` | Enumeration is optional. A failed or missing enumerator produces an explicit unavailable message. |
+| Registry | `W98.regEnum(i)` with `W98.regCount()` | Enumeration is optional. A failed or missing enumerator leaves details unavailable without throwing. |
 | NT executive | `W98.kernel.exec()` | Optional counters include dispatcher/timer activity, I/O, registry hive, bugchecks, and VMBus messages. |
 | Kernel VMBus | `W98.kernel.vmbusStats(which)` | Available only on the WASM kernel build. The adapter labels the signal unavailable when the shim is active. |
 | Hypervisor totals | `W98HV.stats()` or `W98.hv.stats()` | `W98HV` is the safe public hypervisor facade. Its `mode` is `none` when `hypervisor.wasm` failed to load. |
 | Hyper-V details | `partitions()`, `vps()`, `vmbus()`, `vmbusStats()`, `guestFields()`, `guestLog()`, `log()` | These methods are optional and already return empty/safe shapes when the hypervisor is absent. No partition lifecycle method is called by either diagnostic app. |
+
+The kernel glue owns snapshot compatibility, including the current `KREG3`
+writer and its `KREG1`/`KREG2` readers. The applications only use the live
+`W98.regEnum()` surface, so they do not depend on a snapshot tag or private
+registry serialization format.
 
 ## Event and sample semantics
 
