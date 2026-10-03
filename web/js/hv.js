@@ -33,7 +33,17 @@
     'timer', 'vmbus', 'framebuffer', 'run', 'redraw', 'failed'];
   var STATUS = {
     SUCCESS: 0, INVALID_PARAMETER: 2, ACCESS_DENIED: 3, INSUFFICIENT_MEMORY: 4,
-    INVALID_PARTITION_STATE: 5, SLAT_FAULT: 6, NOT_IMPLEMENTED: 7
+    INVALID_PARTITION_STATE: 5, SLAT_FAULT: 6, NOT_IMPLEMENTED: 7,
+    CORRUPT_CHECKPOINT: 8, UNSUPPORTED_VERSION: 9,
+    CHECKPOINT_LIMIT: 10, CHECKPOINT_RUNNING: 11,
+    CHECKPOINT_NOT_FOUND: 12, STALE_ID: 13
+  };
+  var STATUS_NAMES = {
+    0: 'success', 2: 'invalid parameter', 3: 'access denied',
+    4: 'insufficient memory', 5: 'invalid partition state', 6: 'SLAT fault',
+    7: 'not implemented', 8: 'corrupt checkpoint', 9: 'unsupported checkpoint version',
+    10: 'checkpoint serialization limit', 11: 'checkpoint requires a stopped or paused partition',
+    12: 'checkpoint not found', 13: 'stale partition or checkpoint ID'
   };
 
   /* scratch layout inside the module's 256 KB scratch window */
@@ -55,6 +65,7 @@
     C: {
       PART_STATES: PART_STATES, VP_STATES: VP_STATES, CH_STATES: CH_STATES,
       STAGE_NAMES: STAGE_NAMES, STATUS: STATUS,
+      STATUS_NAMES: STATUS_NAMES,
       FB_GPA: FB_GPA, FB_WIDTH: FB_W, FB_HEIGHT: FB_H, HC_GPA: HC_GPA, GPA_LIMIT: GPA_LIMIT
     }
   };
@@ -157,6 +168,7 @@
           canaryFaults: wasm.hv_partition_field(i, 13),
           hasGuest: wasm.hv_partition_field(i, 14) === 1,
           channel: wasm.hv_partition_field(i, 15),
+          identity: partitionIdentity(i),
           heartbeat: wasm.hv_guest_heartbeat(i),
           stage: wasm.hv_guest_field(i, 0),
           canaryLo: wasm.hv_canary_lo(i),
@@ -423,6 +435,146 @@
   function resumePartition(id) { return safe(function () { return wasm.hv_partition_resume(id) === 0; }, false); }
   function stopPartition(id) { return safe(function () { return wasm.hv_partition_stop(id) === 0; }, false); }
   function deletePartition(id) { return safe(function () { return wasm.hv_partition_delete(id) === 0; }, false); }
+  /* ------------------------------------------------ checkpoint / clone API
+     Checkpoint handles are opaque generation-tagged u32 values owned by the
+     hypervisor.  Keep the JS surface deliberately small: all serialization,
+     validation and memory accounting happens in hv.c.  Older images simply do
+     not expose these exports; callers receive an empty list and a clear
+     NOT_IMPLEMENTED status instead of a trap. */
+  function checkpointFn(name, fallback) {
+    if (!wasm) return fallback;
+    if (typeof wasm[name] === 'function') return wasm[name];
+    if (typeof wasm['hv_ckpt_' + name] === 'function') return wasm['hv_ckpt_' + name];
+    if (typeof wasm['hv_checkpoint_' + name] === 'function') return wasm['hv_checkpoint_' + name];
+    return fallback;
+  }
+  function checkpointStatusCode() {
+    return safe(function () {
+      var fn = checkpointFn('last_status', null);
+      if (!fn) return STATUS.NOT_IMPLEMENTED;
+      return fn() >>> 0;
+    }, STATUS.NOT_IMPLEMENTED);
+  }
+  function checkpointStatus() {
+    var code = checkpointStatusCode();
+    return { code: code, name: STATUS_NAMES[code] || ('status ' + code), ok: code === STATUS.SUCCESS };
+  }
+  function checkpointLimits() {
+    return safe(function () {
+      var max = checkpointFn('max_bytes', null);
+      var ver = checkpointFn('format_version', null);
+      return {
+        maxBytes: max ? (max() >>> 0) : 0,
+        formatVersion: ver ? (ver() >>> 0) : 0
+      };
+    }, { maxBytes: 0, formatVersion: 0 });
+  }
+  function checkpointField(id, field) {
+    return safe(function () {
+      var fn = checkpointFn('field', null);
+      return fn ? (fn(id >>> 0, field >>> 0) >>> 0) : 0;
+    }, 0);
+  }
+  function checkpointStateName(code) {
+    /* C stores the checkpoint's source partition state in field 9.  Keep the
+       display useful if a newer image adds a state code we do not know. */
+    if (code == null) return 'unknown';
+    return PART_STATES[code] || (STATUS_NAMES[code] || ('state ' + code));
+  }
+  function checkpointList() {
+    return safe(function () {
+      var countFn = checkpointFn('count', null), fieldFn = checkpointFn('field', null);
+      var slotFn = checkpointFn('slot', null);
+      if (!countFn || !fieldFn) return [];
+      var n = Math.min(4, slotFn ? 4 : (countFn() >>> 0)), out = [], i;
+      for (i = 0; i < n; i++) {
+        /* Field 0 is the opaque generation-tagged checkpoint handle.  Count
+           is a slot count; deleted slots return zero and are skipped. */
+        var id = slotFn ? (slotFn(i) >>> 0) : checkpointField(i + 1, 0);
+        if (!id) continue;
+        var source = checkpointField(id, 1);
+        var namePtr = checkpointField(id, 2);
+        var nameLen = checkpointField(id, 3);
+        var version = checkpointField(id, 4);
+        var bytes = checkpointField(id, 5);
+        var memoryBytes = checkpointField(id, 6);
+        var mappedPages = checkpointField(id, 7);
+        var vps = checkpointField(id, 8);
+        var state = checkpointField(id, 9);
+        var sequence = checkpointField(id, 10);
+        var status = checkpointField(id, 11);
+        out.push({
+          id: id,
+          handle: id,
+          partition: source,
+          sourcePartition: source,
+          identity: source,
+          name: namePtr && nameLen ? readText(namePtr, nameLen) : ('Checkpoint ' + id),
+          bytes: bytes,
+          sizeBytes: bytes,
+          memoryBytes: memoryBytes,
+          mappedPages: mappedPages,
+          vps: vps,
+          version: version,
+          state: state,
+          stateName: checkpointStateName(state),
+          sequence: sequence,
+          status: status
+        });
+      }
+      return out;
+    }, []);
+  }
+  function createCheckpoint(part, name) {
+    return safe(function () {
+      var fn = checkpointFn('create', null);
+      if (!fn) return 0;
+      var a = pushText(name || 'Checkpoint');
+      return fn(part >>> 0, a.p, a.n) >>> 0;
+    }, 0);
+  }
+  function restoreCheckpoint(id, part) {
+    return safe(function () {
+      var fn = checkpointFn('restore', null);
+      if (!fn) return STATUS.NOT_IMPLEMENTED;
+      /* A zero destination means restore in place; this keeps the call useful
+         with both the two-argument and older one-argument C ABI. */
+      var result = fn.length >= 2 ? fn(id >>> 0, (part || 0) >>> 0) : fn(id >>> 0);
+      return result >>> 0;
+    }, STATUS.NOT_IMPLEMENTED);
+  }
+  function deleteCheckpoint(id) {
+    return safe(function () {
+      var fn = checkpointFn('delete', null);
+      if (!fn) return STATUS.NOT_IMPLEMENTED;
+      return fn(id >>> 0) >>> 0;
+    }, STATUS.NOT_IMPLEMENTED);
+  }
+  function cloneCheckpoint(id, name) {
+    return safe(function () {
+      var fn = checkpointFn('clone', null);
+      if (!fn) return 0;
+      var a = pushText(name || 'Clone');
+      return fn(id >>> 0, a.p, a.n) >>> 0;
+    }, 0);
+  }
+  /* Convenience operation used by the Manager: capture the selected
+     partition, clone that stable image, and remove the temporary checkpoint
+     only after a successful clone.  The explicit cloneCheckpoint API remains
+     available when callers want to retain a checkpoint. */
+  function clonePartition(part, name) {
+    var cp = createCheckpoint(part, (name || 'Clone') + ' checkpoint');
+    if (!cp) return 0;
+    var id = cloneCheckpoint(cp, name || 'Clone');
+    if (id) deleteCheckpoint(cp);
+    return id;
+  }
+  function partitionIdentity(part) {
+    return safe(function () {
+      var fn = (typeof wasm.hv_partition_identity === 'function') ? wasm.hv_partition_identity : checkpointFn('partition_identity', null);
+      return fn ? (fn(part >>> 0) >>> 0) : 0;
+    }, 0);
+  }
   function resetPartition(id) {
     return safe(function () {
       if (id === 1) return wasm.hv_partition_start(1) === 0;   /* the root just restarts */
@@ -597,6 +749,17 @@
   API.stopPartition = stopPartition;
   API.resetPartition = resetPartition;
   API.deletePartition = deletePartition;
+  API.checkpoints = checkpointList;
+  API.checkpointList = checkpointList;
+  API.createCheckpoint = createCheckpoint;
+  API.restoreCheckpoint = restoreCheckpoint;
+  API.deleteCheckpoint = deleteCheckpoint;
+  API.cloneCheckpoint = cloneCheckpoint;
+  API.clonePartition = clonePartition;
+  API.partitionIdentity = partitionIdentity;
+  API.checkpointStatus = checkpointStatus;
+  API.checkpointStatusCode = checkpointStatusCode;
+  API.checkpointLimits = checkpointLimits;
   API.vps = vps;
   API.vpList = vps;
   API.memoryMap = memoryMap;
