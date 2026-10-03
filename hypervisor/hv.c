@@ -36,6 +36,8 @@ typedef uint64_t u64;
 #define MAX_VPS          16u
 #define MAX_CHANNELS     16u
 #define MAX_VPS_PER_PART 4u
+#define ID_SLOT_BITS     8u
+#define ID_SLOT_MASK     0xFFu
 #define PAGE_SHIFT       12u
 #define PAGE             (1u << PAGE_SHIFT)          /* 4 KB                */
 #define PHYS_MAX         (16u * 1024u * 1024u)       /* 16 MB               */
@@ -57,7 +59,7 @@ typedef uint64_t u64;
 #define IN_RING_GPA      0x00088000u                 /* root  -> guest ring */
 #define SIMP_GPA         0x00090000u                 /* SynIC message page  */
 #define SIEFP_GPA        0x00091000u                 /* SynIC event flags   */
-#define TSC_GPA          0x00092000u                 /* scratch / ref TSC   */
+#define TSC_GPA          0x00093000u                 /* reference TSC page  */
 #define RING_HDR         16u
 #define RING_DATA        4096u
 #define RING_SIZE        (RING_HDR + RING_DATA)      /* 4112 -> 2 pages     */
@@ -103,6 +105,129 @@ typedef uint64_t u64;
 #define HV_STATUS_BAD_PART_STATE    5u
 #define HV_STATUS_SLAT_FAULT        6u
 #define HV_STATUS_NOT_IMPLEMENTED   7u
+#define HV_STATUS_REP_NOT_COMPLETE  0x10u
+#define VTL0 0u
+#define VTL1 1u
+#define VTL_ACCESS_W 1u
+#define VTL_ACCESS_R 2u
+#define VTL_ACCESS_X 4u
+#define VMX_FAIL_INVALID (-1)
+#define VMX_FAIL_VALID   (-2)
+#define VMXERR_VMLAUNCH_NONCLEAR 4u
+#define VMXERR_VMRESUME_CLEAR 5u
+#define VMXERR_BAD_FIELD 12u
+#define VMXERR_ENTRY_INVALID_CONTROL 33u
+#define VMXERR_ENTRY_INVALID_HOST 34u
+#define VMX_EXIT_CPUID 10u
+#define VMX_EXIT_HLT 12u
+#define VMX_EXIT_VMCALL 18u
+#define VMX_EXIT_RDMSR 31u
+#define VMX_EXIT_WRMSR 32u
+#define VMX_EXIT_EPT_VIOLATION 48u
+#define VMX_EXIT_EPT_MISCONFIG 49u
+#define VMX_EXIT_PREEMPT_TIMER 52u
+#define VMX_EXIT_EXCEPTION 0u
+#define VMX_FIELD_GUEST_RIP 0x681Eu
+#define VMX_FIELD_EXIT_REASON 0x4402u
+#define VMX_FIELD_EXIT_QUAL 0x6400u
+#define VMX_FIELD_EPTP 0x201Au
+#define VMX_FIELD_VPID 0x0000u
+#define VMX_CTRL_PIN 0u
+#define VMX_CTRL_PROC 1u
+#define VMX_CTRL_EXIT 2u
+#define VMX_CTRL_ENTRY 3u
+#define VMX_CTRL_PIN_ALLOWED1 0x0000001Fu
+#define VMX_CTRL_PROC_ALLOWED1 0x7FFFFFFFu
+#define VMX_CTRL_EXIT_ALLOWED1 0x0003FFFFu
+#define VMX_CTRL_ENTRY_ALLOWED1 0x000003FFu
+#define VMX_NESTED_FIELDS       8u
+#define VMX_NESTED_PIN          0u
+#define VMX_NESTED_PROC         1u
+#define VMX_NESTED_EXIT         2u
+#define VMX_NESTED_ENTRY        3u
+#define VMX_NESTED_GUEST_RIP    4u
+#define VMX_NESTED_EXIT_REASON  5u
+#define VMX_NESTED_EXIT_QUAL    6u
+#define VMX_NESTED_LAUNCHED     7u
+
+/* Bounded guest register ISA used for VTL1 secure images and nested L2.
+   Instructions are fixed eight-byte records: {opcode, rd, ra, rb, imm32}.
+   The interpreter never dereferences a guest pointer directly; fetches and
+   data accesses use the same SLAT/EPT walk as a hardware guest. */
+#define ISA_OP_HALT       0x00u
+#define ISA_OP_MOVI       0x01u
+#define ISA_OP_ADD        0x02u
+#define ISA_OP_SUB        0x03u
+#define ISA_OP_XOR        0x04u
+#define ISA_OP_LOAD       0x05u
+#define ISA_OP_STORE      0x06u
+#define ISA_OP_JMP        0x07u
+#define ISA_OP_JNZ        0x08u
+#define ISA_OP_VMCALL     0x09u
+#define ISA_OP_CPUID      0x0Au
+#define ISA_OP_RDMSR      0x0Bu
+#define ISA_OP_WRMSR      0x0Cu
+#define ISA_OP_VTL_CALL   0x0Du
+#define ISA_OP_VTL_RETURN 0x0Eu
+#define ISA_OP_CMP        0x0Fu
+#define ISA_REGS          16u
+#define ISA_INSN_BYTES    8u
+#define ISA_MAX_CODE_PAGES 16u
+#define ISA_MAX_STEPS     0x00100000u
+#define ISA_EXIT_ILLEGAL  0x100u
+#define ISA_EXIT_SLAT     VMX_EXIT_EPT_VIOLATION
+
+/* HV_PARTITION_PRIVILEGE_MASK (TLFS).  CPUID leaf 0x40000003 returns the
+   low 32 bits in EAX and the high 32 bits in EBX.  Keep the two halves
+   separate at the wasm boundary: a u64 export would become a BigInt in JS. */
+#define HV_PRIV_LO_VP_RUNTIME       (1u << 0)
+#define HV_PRIV_LO_REF_COUNTER      (1u << 1)
+#define HV_PRIV_LO_SYNIC            (1u << 2)
+#define HV_PRIV_LO_STIMER           (1u << 3)
+#define HV_PRIV_LO_INTR_CTRL        (1u << 4)
+#define HV_PRIV_LO_HYPERCALL_MSRS   (1u << 5)
+#define HV_PRIV_LO_VP_INDEX         (1u << 6)
+#define HV_PRIV_LO_RESET            (1u << 7)
+#define HV_PRIV_LO_STATS            (1u << 8)
+#define HV_PRIV_LO_REF_TSC          (1u << 9)
+#define HV_PRIV_LO_GUEST_IDLE       (1u << 10)
+#define HV_PRIV_LO_FREQUENCY        (1u << 11)
+#define HV_PRIV_LO_REENLIGHTEN      (1u << 13)
+
+#define HV_PRIV_HI_CREATE_PARTS     (1u << 0)  /* architectural bit 32 */
+#define HV_PRIV_HI_PARTITION_ID     (1u << 1)
+#define HV_PRIV_HI_MEMORY_POOL      (1u << 2)
+#define HV_PRIV_HI_POST_MESSAGES    (1u << 4)
+#define HV_PRIV_HI_SIGNAL_EVENTS    (1u << 5)
+#define HV_PRIV_HI_CREATE_PORT      (1u << 6)
+#define HV_PRIV_HI_CONNECT_PORT     (1u << 7)
+#define HV_PRIV_HI_STATS            (1u << 8)
+#define HV_PRIV_HI_DEBUGGING        (1u << 11)
+#define HV_PRIV_HI_CPU_MANAGEMENT   (1u << 12)
+#define HV_PRIV_HI_VSM              (1u << 16)
+#define HV_PRIV_HI_VP_REGISTERS     (1u << 17)
+#define HV_PRIV_HI_EXT_HYPERCALLS   (1u << 20)
+#define HV_PRIV_HI_START_VP         (1u << 21)
+
+/* A child receives the normal guest-facing privileges only.  In particular,
+   it cannot create/manage sibling or child partitions, consume the host
+   memory pool, or create virtual processors. */
+#define HV_CHILD_PRIV_LO (HV_PRIV_LO_VP_RUNTIME | HV_PRIV_LO_REF_COUNTER | \
+                          HV_PRIV_LO_SYNIC | HV_PRIV_LO_STIMER | \
+                          HV_PRIV_LO_INTR_CTRL | HV_PRIV_LO_HYPERCALL_MSRS | \
+                          HV_PRIV_LO_VP_INDEX | HV_PRIV_LO_REF_TSC)
+#define HV_CHILD_PRIV_HI (HV_PRIV_HI_POST_MESSAGES | HV_PRIV_HI_SIGNAL_EVENTS)
+
+#define HV_ROOT_PRIV_LO  (HV_CHILD_PRIV_LO | HV_PRIV_LO_RESET | \
+                          HV_PRIV_LO_STATS | HV_PRIV_LO_GUEST_IDLE | \
+                          HV_PRIV_LO_FREQUENCY | HV_PRIV_LO_REENLIGHTEN)
+#define HV_ROOT_PRIV_HI  (HV_PRIV_HI_CREATE_PARTS | HV_PRIV_HI_PARTITION_ID | \
+                          HV_PRIV_HI_MEMORY_POOL | HV_PRIV_HI_POST_MESSAGES | \
+                          HV_PRIV_HI_SIGNAL_EVENTS | HV_PRIV_HI_CREATE_PORT | \
+                          HV_PRIV_HI_CONNECT_PORT | HV_PRIV_HI_STATS | \
+                          HV_PRIV_HI_DEBUGGING | HV_PRIV_HI_CPU_MANAGEMENT | \
+                          HV_PRIV_HI_VSM | HV_PRIV_HI_VP_REGISTERS | \
+                          HV_PRIV_HI_EXT_HYPERCALLS | HV_PRIV_HI_START_VP)
 
 /* hypercall codes */
 #define HC_GET_HV_INFO      0x0011u
@@ -111,6 +236,7 @@ typedef uint64_t u64;
 #define HC_CREATE_PART      0x0040u
 #define HC_INIT_PART        0x0041u
 #define HC_DEPOSIT_MEM      0x0043u
+#define HC_WITHDRAW_MEM     0x0044u
 #define HC_CREATE_VP        0x0047u
 #define HC_SET_VP_REGISTERS 0x0050u
 #define HC_MAP_GPA_PAGES    0x0053u
@@ -136,6 +262,10 @@ typedef uint64_t u64;
 #define MSR_SIMP            0x40000083u
 #define MSR_EOM             0x40000084u
 #define MSR_SINT0           0x40000090u
+#define MSR_TPR             0x40000070u
+#define MSR_EOI             0x40000071u
+#define MSR_ICR             0x40000072u
+#define MSR_APIC_SCONTROL   0x40000073u
 
 /* VMBus frame types (HV_ABI.md 2.5) */
 #define VMB_OFFER           1u
@@ -186,7 +316,7 @@ static char HLOG[HLOG_SIZE];                     /* hypervisor log          */
 static u32 HLOG_LEN;
 static char VENDOR[16] = "Microsoft Hv";
 
-typedef struct { u32 owner; u32 gpa; u32 flags; u32 mapped; } HostPage;
+typedef struct { u32 owner; u32 gpa; u32 flags; u32 mapped; u32 dirty; } HostPage;
 static HostPage PAGES[HOST_PAGES];
 
 /* SynIC message (256 bytes, HV_ABI.md 2.5) */
@@ -198,6 +328,8 @@ typedef struct {
 } SynicMsg;
 
 typedef struct { u32 msr; u32 lo; u32 hi; u32 valid; } MsrEntry;
+
+typedef struct { u32 armed, sint, period, oneshot, direct, acc, fires, last, pending, masked; } SynthTimer;
 
 typedef struct {
     u32 used;
@@ -212,17 +344,38 @@ typedef struct {
     u32 instr;
     u32 slice_left;
     u32 preempts;
-    u32 regs[4];              /* 0..3 (rdx/r8/r9/rip-style)                 */
+    u32 regs[32];             /* HV_REGISTER_NAME data model                */
+    u32 tpr, eoi, ipi_pending, ipi_vector, ipi_delivered;
+    SynthTimer stimer[4];
     /* SynIC */
     u32 scontrol, simp, siefp, eom;
-    u32 sint_vec[4], sint_masked[4], sint_count[4];
-    u32 msg_count, msg_dropped, events;
+    u32 sint_vec[16], sint_masked[16], sint_auto_eoi[16], sint_count[16], sint_pending[16], sint_dropped[16];
+    u32 event_flags[16];
+    u32 msg_count, msg_dropped, events, msg_consumed;
     SynicMsg msgs[MSG_QUEUE];
     u32 msg_head, msg_tail;
     /* virtual MSRs */
     MsrEntry msrs[MAX_MSRS];
     /* legacy (root) partition-only convenience */
     u32 timer_fires, timer_last, timer_pending;
+    u32 ref_seq, ref_scale, ref_offset_lo, ref_offset_hi;
+    u32 rep_code, rep_total, rep_done, rep_start, rep_active, rep_status;
+    u32 vmx_on, vmcs, vmcs_state, vmx_exit_reason, vmx_exit_qual, vmx_error, vmx_ept_generation, vmx_tlb_gpa, vmx_tlb_flags, vmx_tlb_valid;
+    u32 vmx_interrupt_info, vmx_guest_if, vmx_interrupt_window, vmx_preempt_timer, vmx_nested, vmx_interrupt_delivered;
+    u32 vmx_nested_reason, vmx_nested_reflect, vmx_nested_exit, vmx_nested_exit_qual, vmx_nested_merged;
+    u32 vmx_vmcs12[VMX_NESTED_FIELDS], vmx_vmcs02[VMX_NESTED_FIELDS];
+    u32 vmx_vpid, vmx_tlb_vpid, vmx_controls[4], vmx_host_state, vmx_guest_state;
+    u32 vmx_msr_bitmap_msrs[8], vmx_msr_bitmap_flags[8];
+    u32 vmx_io_bitmap_ports[8], vmx_io_bitmap_flags[8];
+    u32 vtl_sint_vec[2][16], vtl_sint_masked[2][16], vtl_sint_pending[2][16], vtl_sint_count[2][16];
+    u32 vtl_interrupt_pending[2], vtl_interrupt_vector[2], vtl_interrupt_delivered[2];
+    u32 vtl_regs[2][32];
+    /* Tiny guest-ISA context.  This is separate from the staged desktop
+       guest state so a secure VTL1 image or nested L2 can be resumed at an
+       instruction boundary after an exit. */
+    u32 isa_active, isa_vtl, isa_secure, isa_entry, isa_rip, isa_code_end;
+    u32 isa_steps, isa_faults, isa_last_exit, isa_last_qual, isa_halted, isa_status;
+    u32 isa_regs[ISA_REGS];
 } Vp;
 
 typedef struct {
@@ -230,6 +383,9 @@ typedef struct {
     u32 state;                /* PS_*                                       */
     u32 is_root;
     u32 parent;               /* partition index of the parent (-1 = none)  */
+    u32 generation;           /* external partition-id sequence              */
+    u32 priv_lo;              /* CPUID 0x40000003 EAX                     */
+    u32 priv_hi;              /* CPUID 0x40000003 EBX                     */
     u32 name_len;
     char name[NAME_LEN];
     u32 vp_count;
@@ -243,7 +399,7 @@ typedef struct {
     u32 has_guest;
     u32 win_first;            /* first host PFN of window+canaries          */
     u32 canary_lo, canary_hi; /* host PFNs of the guard pages               */
-    u32 slat[GPA_PAGES];      /* (pfn << 2) | (writable | present << 1)     */
+    u32 slat[GPA_PAGES];      /* (pfn << 3) | (W bit0, R bit1, X bit2)     */
     /* synthetic timer (2.5) */
     u32 timer_armed, timer_sint, timer_period, timer_oneshot, timer_acc;
     u32 timer_vp, timer_fires, timer_last, timer_pending, timer_masked;
@@ -255,15 +411,31 @@ typedef struct {
     /* MSR access log (ring of the last MSR_LOG accesses) */
     u32 msrlog_n, msrlog_head;
     struct { u32 msr, value, write; } msrlog[MSR_LOG];
+    u32 weight, vtl_cap;
+    u32 sched_left;
+    u32 props[4];
+    u32 device_tx[6], device_rx[6], device_status[6];
+    u32 vtl_enabled, current_vtl, vtl_calls, vtl_returns, vtl_intercepts, vtl_intercept_gpa, vtl_intercept_access;
+    u32 hvci_denies, kdp_denies, pcr, hyperguard_denies;
+    u32 vsm_code_gpa, vsm_code_hash, vsm_code_ready;
+    u8 vtl_perms[2][GPA_PAGES], vtl_perm_valid[2][GPA_PAGES];
+    u8 hvci_signed[GPA_PAGES], kdp_protected[GPA_PAGES];
+    u32 secret_len; u8 secure_secret[64];
 } Partition;
 
 static Partition PARTS[MAX_PARTS];
 static Vp        VPS[MAX_VPS];
+static u32 VMX_FIELDS[MAX_VPS][64];
+static u8 VMX_EPT[MAX_VPS][GPA_PAGES];
+static u8 VMX_EPT_AD[MAX_VPS][GPA_PAGES];
+static u32 VMX_EPT_TABLE[MAX_VPS][4][512];
+static u32 vmx_feature_control_reg;
 
 typedef struct {
-    u32 used, part, state, chid;
+    u32 used, part, state, chid, generation;
     u32 offer_lo, offer_hi, ring_gpa;
     u32 in_bytes, out_bytes, messages, dropped;
+    u32 version, gpadl_gpa, gpadl_pages, interrupt_mask, pending_send, rescinded;
 } Channel;
 static Channel CHANS[MAX_CHANNELS];
 
@@ -277,6 +449,11 @@ u32  guest_run(u32 part, u32 vp, u32 budget);
 void guest_reset(u32 part, u32 vp);
 void guest_timer_fire(u32 part);
 u32  guest_field(u32 part, u32 f);
+void guest_checkpoint_restore(u32 part, u32 stage, u32 heartbeat);
+u32  hv_synic_eom(u32 vp);
+i32  hv_vmbus_close(u32 ch);
+u32  hv_isa_step(u32 vp, u32 budget);
+u32  hv_isa_field(u32 vp, u32 field);
 
 /* ------------------------------------------------------------- global state */
 static u32 g_inited;
@@ -287,7 +464,15 @@ static u32 g_slat_faults;            /* every SLAT violation                 */
 static u32 g_owned, g_present, g_deposits;
 static u32 g_slices, g_preemptions, g_ctx_switches, g_idle_slices;
 static u32 rr_cursor;
-static u32 g_next_chid;
+/* One bounded framebuffer/progress sidecar per partition.  The public HVC1
+   record remains 64 bytes for old callers; this sidecar supplies the roadmap's
+   stronger restore guarantee without changing that record's layout. */
+static u8  CHECKPOINT_FB[MAX_PARTS][FB_BYTES];
+static u32 CHECKPOINT_VALID[MAX_PARTS], CHECKPOINT_HASH[MAX_PARTS];
+static u32 CHECKPOINT_HEARTBEAT[MAX_PARTS], CHECKPOINT_STAGE[MAX_PARTS];
+
+static Partition *part_of(u32 id);
+static u32 part_id_of(const Partition *p);
 
 /* ------------------------------------------------ freestanding libc subset */
 static void *memcpy(void *dst, const void *src, u32 n) {
@@ -319,9 +504,9 @@ static void log_hex(u32 v) {
 }
 
 void hv_guest_log(u32 part_id, const char *s) {   /* called by the guest */
-    if (part_id < 1u || part_id > MAX_PARTS) return;
-    Partition *p = &PARTS[part_id - 1u];
+    Partition *p = part_of(part_id);
     u32 n = slen(s);
+    if (!p) return;
     if (p->glog_len + n + 1u < GLOG_SIZE) {
         memcpy(p->glog + p->glog_len, s, n);
         p->glog_len += n;
@@ -330,38 +515,67 @@ void hv_guest_log(u32 part_id, const char *s) {   /* called by the guest */
 }
 
 /* -------------------------------------------------------------- accessors */
+static u32 part_slot(u32 id) {
+    u32 slot = id & ID_SLOT_MASK;
+    if (!slot || slot > MAX_PARTS) return MAX_PARTS;
+    return slot - 1u;
+}
+static u32 part_id_of(const Partition *p) {
+    return (p->generation << ID_SLOT_BITS) | ((u32)(p - PARTS) + 1u);
+}
 static Partition *part_of(u32 id) {
-    if (id < 1u || id > MAX_PARTS) return 0;
-    Partition *p = &PARTS[id - 1u];
-    return p->used ? p : 0;
+    u32 slot = part_slot(id), generation;
+    Partition *p;
+    if (slot >= MAX_PARTS) return 0;
+    p = &PARTS[slot];
+    generation = id >> ID_SLOT_BITS;
+    return (p->used && p->generation == generation) ? p : 0;
+}
+static u32 part_has_priv(Partition *p, u32 lo, u32 hi) {
+    if (!p) return 0u;
+    return ((p->priv_lo & lo) == lo && (p->priv_hi & hi) == hi) ? 1u : 0u;
 }
 static Vp *vp_of(u32 id) {
     if (id < 1u || id > MAX_VPS) return 0;
     Vp *v = &VPS[id - 1u];
     return v->used ? v : 0;
 }
+static u32 chan_slot(u32 id) {
+    u32 slot = id & ID_SLOT_MASK;
+    if (!slot || slot > MAX_CHANNELS) return MAX_CHANNELS;
+    return slot - 1u;
+}
+static u32 chan_id_of(const Channel *c) {
+    return (c->generation << ID_SLOT_BITS) | ((u32)(c - CHANS) + 1u);
+}
 static Channel *chan_of(u32 id) {
-    if (id < 1u || id > MAX_CHANNELS) return 0;
-    Channel *c = &CHANS[id - 1u];
-    return c->used ? c : 0;
+    u32 slot = chan_slot(id), generation;
+    Channel *c;
+    if (slot >= MAX_CHANNELS) return 0;
+    c = &CHANS[slot];
+    generation = id >> ID_SLOT_BITS;
+    return (c->used && c->generation == generation) ? c : 0;
 }
 
 /* -------------------------------------------------------------------- SLAT */
-/* entry = 0            -> unmapped
-   entry & 2 == 0       -> "mapped" but not present (accesses fault)
-   entry & 2, !(entry&1) -> read-only
-   entry & 3            -> read/write                                            */
+/* SLAT entry = (PFN << 3) | permissions.  Bit 1 is the legacy "present"
+   (read) bit, bit 0 is writable, and bit 2 is executable.  Keeping R/W in
+   their old positions preserves hv_gpa_state for existing callers while the
+   third bit makes execute checks explicit. */
+#define SLAT_W 1u
+#define SLAT_R 2u
+#define SLAT_X 4u
 static u32 slat_pfn(Partition *p, u32 gpa, u32 *flags) {
     u32 e;
     if (gpa >= GPA_LIMIT) return 0;
     e = p->slat[gpa >> PAGE_SHIFT];
     if (!e) return 0;
-    if (flags) *flags = e & 3u;
-    return e >> 2;
+    if (flags) *flags = e & 7u;
+    return e >> 3;
 }
 static u32 slat_set(Partition *p, u32 gpa, u32 pfn, u32 flags) {
     if (gpa >= GPA_LIMIT) return 0;
-    p->slat[gpa >> PAGE_SHIFT] = (pfn << 2) | (flags & 3u);
+    p->slat[gpa >> PAGE_SHIFT] = (pfn << 3) | (flags & 7u);
     return 1;
 }
 static u32 gpa_state_of(Partition *p, u32 gpa) {
@@ -369,9 +583,9 @@ static u32 gpa_state_of(Partition *p, u32 gpa) {
     if (gpa >= GPA_LIMIT) return 0u;
     e = p->slat[gpa >> PAGE_SHIFT];
     if (!e) return 0u;
-    fl = e & 3u;
-    if (!(fl & 2u)) return 1u;                  /* mapped, not present      */
-    return (fl & 1u) ? 3u : 2u;                 /* rw : ro                  */
+    fl = e & 7u;
+    if (!(fl & SLAT_R)) return 1u;              /* mapped, not readable    */
+    return (fl & SLAT_W) ? 3u : 2u;             /* rw : ro                  */
 }
 
 /* host page allocator: first-fit contiguous run of n free pages */
@@ -417,7 +631,7 @@ static void pages_own(u32 first, u32 n, u32 part_idx) {
 static void part_fault(Partition *p, u32 gpa, const char *why) {
     p->faults++;
     g_slat_faults++;
-    log_str("hv: partition "); log_num(p - PARTS + 1u);
+    log_str("hv: partition "); log_num(part_id_of(p));
     log_str(" SLAT fault ("); log_str(why); log_str(") gpa ");
     log_hex(gpa); log_char('\n');
     if (p->state != PS_FAULTED && p->state != PS_DELETED) p->state = PS_FAULTED;
@@ -433,7 +647,7 @@ u32 hv_g_load(u32 part_id, u32 gpa, u32 dst, u32 len) {
         u32 a = gpa + off, f, pfn, chunk;
         u8 *hp;
         pfn = slat_pfn(p, a, &f);
-        if (!pfn || !(f & 2u)) { part_fault(p, a, "load"); return 0; }
+        if (!pfn || !(f & SLAT_R)) { part_fault(p, a, "load/read"); return 0; }
         chunk = PAGE - (a & (PAGE - 1u));
         if (chunk > len - off) chunk = len - off;
         hp = &PHYS[(pfn << PAGE_SHIFT) + (a & (PAGE - 1u))];
@@ -451,12 +665,13 @@ u32 hv_g_store(u32 part_id, u32 gpa, u32 src, u32 len) {
         u32 a = gpa + off, f, pfn, chunk;
         u8 *hp;
         pfn = slat_pfn(p, a, &f);
-        if (!pfn || !(f & 2u)) { part_fault(p, a, "store"); return 0; }
-        if (!(f & 1u)) { part_fault(p, a, "store to read-only page"); return 0; }
+        if (!pfn || !(f & SLAT_R)) { part_fault(p, a, "store/read"); return 0; }
+        if (!(f & SLAT_W)) { part_fault(p, a, "store to read-only page"); return 0; }
         chunk = PAGE - (a & (PAGE - 1u));
         if (chunk > len - off) chunk = len - off;
         hp = &PHYS[(pfn << PAGE_SHIFT) + (a & (PAGE - 1u))];
         memcpy(hp, (const u8 *)(src + off), chunk);
+        PAGES[pfn].dirty = 1u;
         off += chunk;
     }
     return len;
@@ -468,7 +683,7 @@ static u32 hv_mem_read(Partition *p, u32 gpa, u32 dst, u32 len, u32 fault) {
     while (off < len) {
         u32 a = gpa + off, f, pfn, chunk;
         pfn = slat_pfn(p, a, &f);
-        if (!pfn || !(f & 2u)) {
+        if (!pfn || !(f & SLAT_R)) {
             if (fault) part_fault(p, a, "read");
             else { log_str("hv: read of unmapped gpa "); log_hex(a); log_char('\n'); }
             return 0;
@@ -486,7 +701,7 @@ static u32 hv_mem_write(Partition *p, u32 gpa, u32 src, u32 len, u32 fault) {
     while (off < len) {
         u32 a = gpa + off, f, pfn, chunk;
         pfn = slat_pfn(p, a, &f);
-        if (!pfn || !(f & 2u)) {
+        if (!pfn || !(f & SLAT_R)) {
             if (fault) part_fault(p, a, "write");
             else { log_str("hv: write to unmapped gpa "); log_hex(a); log_char('\n'); }
             return 0;
@@ -494,9 +709,17 @@ static u32 hv_mem_write(Partition *p, u32 gpa, u32 src, u32 len, u32 fault) {
         chunk = PAGE - (a & (PAGE - 1u));
         if (chunk > len - off) chunk = len - off;
         memcpy(&PHYS[(pfn << PAGE_SHIFT) + (a & (PAGE - 1u))], (const u8 *)(src + off), chunk);
+        PAGES[pfn].dirty = 1u;
         off += chunk;
     }
     return len;
+}
+static void publish_reference_tsc(Vp *v) {
+    Partition *p = &PARTS[v->part];
+    u32 page[4];
+    page[0] = v->ref_seq; page[1] = v->ref_scale;
+    page[2] = v->ref_offset_lo; page[3] = v->ref_offset_hi;
+    if (p->has_guest) (void)hv_mem_write(p, TSC_GPA, (u32)page, sizeof(page), 0u);
 }
 
 /* ------------------------------------------------------------------ canary */
@@ -519,7 +742,7 @@ static u32 canary_check(Partition *p) {
         g_slat_faults++;
         log_str("hv: GUEST ISOLATION VIOLATION - canary page ");
         log_hex((p->canary_lo << PAGE_SHIFT) + (i * 4u));
-        log_str(" under partition "); log_num(p - PARTS + 1u);
+        log_str(" under partition "); log_num(part_id_of(p));
         log_str(" was modified; partition faulted (state 6)\n");
         p->state = PS_FAULTED;
         return 1;
@@ -531,7 +754,7 @@ static u32 canary_check(Partition *p) {
         g_slat_faults++;
         log_str("hv: GUEST ISOLATION VIOLATION - canary page ");
         log_hex((p->canary_hi << PAGE_SHIFT) + (i * 4u));
-        log_str(" under partition "); log_num(p - PARTS + 1u);
+        log_str(" under partition "); log_num(part_id_of(p));
         log_str(" was modified; partition faulted (state 6)\n");
         p->state = PS_FAULTED;
         return 1;
@@ -551,14 +774,8 @@ static Vp *vp_alloc(u32 part_idx, u32 index) {
             v->index = index;
             v->state = VS_CREATED;
             v->slice_left = QUANTUM_INSTR;
-            v->sint_vec[0] = 0x20u;
-            v->sint_vec[1] = 0x21u;
-            v->sint_vec[2] = 0x22u;
-            v->sint_vec[3] = 0x23u;
-            v->sint_masked[0] = 1u;
-            v->sint_masked[1] = 1u;
-            v->sint_masked[2] = 1u;
-            v->sint_masked[3] = 1u;
+            v->ref_seq = 1u; v->ref_scale = 1u;
+            for (u32 s = 0; s < 16u; s++) { v->sint_vec[s] = 0x20u + s; v->sint_masked[s] = 1u; }
             return v;
         }
     }
@@ -578,21 +795,47 @@ static void msrlog_add(Partition *p, u32 msr, u32 value, u32 write) {
 /* ------------------------------------------------------ virtual MSR access */
 static u32 msr_read(Vp *v, u32 msr, u32 *lo, u32 *hi) {
     u32 i;
+    Partition *p = &PARTS[v->part];
     *lo = 0; *hi = 0;
-    if (msr == MSR_VP_INDEX) { *lo = v->index; return HV_STATUS_SUCCESS; }
+    if (msr == MSR_VP_INDEX) {
+        if (!part_has_priv(p, HV_PRIV_LO_VP_INDEX, 0u)) return HV_STATUS_ACCESS_DENIED;
+        *lo = v->index; return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_HYPERCALL && !part_has_priv(p, HV_PRIV_LO_HYPERCALL_MSRS, 0u)) return HV_STATUS_ACCESS_DENIED;
     if (msr == MSR_TIME_REF_COUNT) {
+        if (!part_has_priv(p, HV_PRIV_LO_REF_COUNTER, 0u)) return HV_STATUS_ACCESS_DENIED;
         u64 t = (u64)REF_TIME * 10000ULL;        /* 100 ns units */
         *lo = (u32)(t & 0xFFFFFFFFu);
         *hi = (u32)(t >> 32);
         return HV_STATUS_SUCCESS;
     }
-    if (msr == MSR_SIMP) { *lo = v->simp; return HV_STATUS_SUCCESS; }
-    if (msr == MSR_SIEFP) { *lo = v->siefp; return HV_STATUS_SUCCESS; }
-    if (msr == MSR_SCONTROL) { *lo = v->scontrol; return HV_STATUS_SUCCESS; }
-    if (msr == MSR_EOM) { *lo = v->eom; return HV_STATUS_SUCCESS; }
-    if (msr >= MSR_SINT0 && msr < MSR_SINT0 + 4u) {
+    if (msr == MSR_REFERENCE_TSC) {
+        if (!part_has_priv(p, HV_PRIV_LO_REF_TSC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        *lo = TSC_GPA | 1u; return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_SIMP) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        *lo = v->simp; return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_SIEFP) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        *lo = v->siefp; return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_SCONTROL) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        *lo = v->scontrol; return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_EOM) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        *lo = v->eom; return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_TPR) { *lo = v->tpr; return HV_STATUS_SUCCESS; }
+    if (msr == MSR_EOI) { *lo = v->eoi; return HV_STATUS_SUCCESS; }
+    if (msr == MSR_ICR) { *lo = v->ipi_vector; return HV_STATUS_SUCCESS; }
+    if (msr >= MSR_SINT0 && msr < MSR_SINT0 + 16u) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
         u32 k = msr - MSR_SINT0;
-        *lo = v->sint_vec[k] | (v->sint_masked[k] ? 0x10000u : 0u);
+        *lo = v->sint_vec[k] | (v->sint_masked[k] ? 0x10000u : 0u) | (v->sint_auto_eoi[k] ? 0x20000u : 0u);
         return HV_STATUS_SUCCESS;
     }
     for (i = 0; i < MAX_MSRS; i++)
@@ -601,17 +844,36 @@ static u32 msr_read(Vp *v, u32 msr, u32 *lo, u32 *hi) {
 }
 static u32 msr_write(Vp *v, u32 msr, u32 lo, u32 hi) {
     u32 i;
+    Partition *p = &PARTS[v->part];
     if (msr == MSR_VP_INDEX) return HV_STATUS_ACCESS_DENIED;   /* read only */
-    if (msr == MSR_SIMP) { v->simp = lo; msrlog_add(&PARTS[v->part], msr, lo, 1u); return HV_STATUS_SUCCESS; }
-    if (msr == MSR_SIEFP) { v->siefp = lo; msrlog_add(&PARTS[v->part], msr, lo, 1u); return HV_STATUS_SUCCESS; }
-    if (msr == MSR_SCONTROL) { v->scontrol = lo; msrlog_add(&PARTS[v->part], msr, lo, 1u); return HV_STATUS_SUCCESS; }
-    if (msr == MSR_EOM) { v->eom = lo; return HV_STATUS_SUCCESS; }
-    if (msr >= MSR_SINT0 && msr < MSR_SINT0 + 4u) {
+    if (msr == MSR_HYPERCALL && !part_has_priv(p, HV_PRIV_LO_HYPERCALL_MSRS, 0u)) return HV_STATUS_ACCESS_DENIED;
+    if (msr == MSR_SIMP) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        v->simp = lo; msrlog_add(p, msr, lo, 1u); return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_SIEFP) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        v->siefp = lo; msrlog_add(p, msr, lo, 1u); return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_SCONTROL) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        v->scontrol = lo; msrlog_add(p, msr, lo, 1u); return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_EOM) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
+        v->eom = lo; return HV_STATUS_SUCCESS;
+    }
+    if (msr == MSR_TPR) { v->tpr = lo & 0xFFu; return HV_STATUS_SUCCESS; }
+    if (msr == MSR_EOI) { v->eoi = lo; return hv_synic_eom((u32)(v - VPS) + 1u); }
+    if (msr == MSR_ICR) { v->ipi_vector = lo & 0xFFu; v->ipi_pending = 1u; return HV_STATUS_SUCCESS; }
+    if (msr >= MSR_SINT0 && msr < MSR_SINT0 + 16u) {
+        if (!part_has_priv(p, HV_PRIV_LO_SYNIC, 0u)) return HV_STATUS_ACCESS_DENIED;
         u32 k = msr - MSR_SINT0;
         v->sint_vec[k] = lo & 0xFFu;
         v->sint_masked[k] = (lo & 0x10000u) ? 1u : 0u;
+        v->sint_auto_eoi[k] = (lo & 0x20000u) ? 1u : 0u;
         v->sint_count[k] = 0;
-        msrlog_add(&PARTS[v->part], msr, lo, 1u);
+        msrlog_add(p, msr, lo, 1u);
         return HV_STATUS_SUCCESS;
     }
     if (msr == MSR_TIME_REF_COUNT) return HV_STATUS_ACCESS_DENIED;
@@ -634,11 +896,11 @@ static u32 msr_write(Vp *v, u32 msr, u32 lo, u32 hi) {
 }
 
 /* ------------------------------------------------------------------ CPUID */
-static u32 cpuid_leaf(u32 leaf, u32 subleaf, u32 *out) {
+static u32 cpuid_leaf(u32 leaf, u32 subleaf, u32 *out, u32 priv_lo, u32 priv_hi) {
     out[0] = out[1] = out[2] = out[3] = 0;
     if (leaf == 0x00000001u) {                     /* hypervisor-present bit */
         out[0] = 0x00000600u;                      /* family/model            */
-        out[2] = 0x80000000u;                      /* ECX[31] = hypervisor    */
+        out[2] = 0x80000020u;                      /* ECX[5] VMX, ECX[31] HV  */
         return 1u;
     }
     switch (leaf) {
@@ -656,8 +918,8 @@ static u32 cpuid_leaf(u32 leaf, u32 subleaf, u32 *out) {
         out[2] = 0x00000001u;                      /* major.minor             */
         return 1u;
     case 0x40000003u:                              /* privilege mask          */
-        out[0] = 0x00000001u;                      /* VP privilege            */
-        out[1] = 0x0000000Fu;
+        out[0] = priv_lo;
+        out[1] = priv_hi;
         return 1u;
     case 0x40000004u:                              /* recommendations         */
         out[0] = 0x00000001u;
@@ -677,8 +939,9 @@ static u32 cpuid_leaf(u32 leaf, u32 subleaf, u32 *out) {
 u32 hv_cpuid(u32 part, u32 leaf, u32 subleaf, u32 out_ptr);
 u32 hv_cpuid(u32 part, u32 leaf, u32 subleaf, u32 out_ptr) {
     u32 v[4];
-    (void)part;
-    cpuid_leaf(leaf, subleaf, v);
+    Partition *p = part ? part_of(part) : &PARTS[0];
+    if (!p) return 0u;
+    cpuid_leaf(leaf, subleaf, v, p->priv_lo, p->priv_hi);
     if (out_ptr) memcpy((u8 *)out_ptr, v, 16);
     return v[0] | (v[1] | (v[2] | v[3]));          /* nonzero if any field    */
 }
@@ -691,7 +954,11 @@ static u32 synic_post(Vp *v, const SynicMsg *m) {
     v->msg_tail = next;
     v->msg_count++;
     v->events++;
-    if (m->type < 4u) v->sint_count[m->type]++;
+    if (m->type < 16u) {
+        v->sint_pending[m->type] = 1u;
+        if (v->sint_masked[m->type]) v->sint_dropped[m->type]++;
+        else v->sint_count[m->type]++;
+    }
     return 1;
 }
 static u32 root_vp_id(void) {
@@ -769,28 +1036,66 @@ static void timer_fire(Partition *p) {
     p->timer_last = REF_TIME;
     p->timer_pending++;
     if (v) { v->timer_fires = p->timer_fires; v->timer_last = p->timer_last; v->timer_pending = p->timer_pending; }
-    if (v && v->sint_masked[p->timer_sint & 3u]) p->timer_masked++;
-    else if (v) v->sint_count[p->timer_sint & 3u]++;
-    guest_timer_fire((u32)(p - PARTS) + 1u);
+    if (v && v->sint_masked[p->timer_sint & 15u]) { p->timer_masked++; v->sint_dropped[p->timer_sint & 15u]++; }
+    else if (v) { v->sint_count[p->timer_sint & 15u]++; v->sint_pending[p->timer_sint & 15u] = 1u; }
+    guest_timer_fire(part_id_of(p));
     if (p->timer_fires <= 3u) {
         log_str("hv: synthetic timer (SINT"); log_num(p->timer_sint);
-        log_str(") fired for partition "); log_num(p - PARTS + 1u);
+        log_str(") fired for partition "); log_num(part_id_of(p));
         log_str(" at "); log_num(REF_TIME); log_str(" ms\n");
     }
 }
 
 /* ----------------------------------------------------------- dispatch */
 static Vp *next_vp(void) {
-    u32 i;
+    u32 i, k, any = 0, best = 0, best_left = 0;
+    /* Weighted round-robin is deliberately partition based: a four-VP
+       partition receives one share of its weight, then its VPs rotate. */
+    for (i = 0; i < MAX_PARTS; i++) {
+        Partition *p = &PARTS[i];
+        u32 j, runnable = 0;
+        if (!p->used || p->state != PS_RUNNING || !p->has_guest) continue;
+        for (j = 0; j < p->vp_count; j++) {
+            Vp *v = vp_of(p->vps[j]);
+            if (v && v->state == VS_RUNNING) { runnable = 1; break; }
+        }
+        if (!runnable) continue;
+        any = 1;
+        if (p->sched_left > best_left) { best_left = p->sched_left; best = i + 1u; }
+    }
+    if (!any) return 0;
+    if (!best_left) {
+        /* A bounded cycle makes the exact integer weight ratio observable and
+           also handles a weight change without accumulating stale credit. */
+        for (i = 0; i < MAX_PARTS; i++) {
+            Partition *p = &PARTS[i];
+            u32 j, runnable = 0;
+            if (!p->used || p->state != PS_RUNNING || !p->has_guest) continue;
+            for (j = 0; j < p->vp_count; j++) {
+                Vp *v = vp_of(p->vps[j]);
+                if (v && v->state == VS_RUNNING) { runnable = 1; break; }
+            }
+            if (runnable) p->sched_left = p->weight ? p->weight : 1u;
+        }
+        best = 0; best_left = 0;
+        for (i = 0; i < MAX_VPS; i++) {
+            k = (rr_cursor + i) % MAX_VPS;
+            if (!VPS[k].used || VPS[k].state != VS_RUNNING) continue;
+            if (PARTS[VPS[k].part].state != PS_RUNNING || !PARTS[VPS[k].part].has_guest) continue;
+            if (PARTS[VPS[k].part].sched_left > best_left) {
+                best_left = PARTS[VPS[k].part].sched_left;
+                best = VPS[k].part + 1u;
+            }
+        }
+    }
+    if (!best) return 0;
+    PARTS[best - 1u].sched_left--;
     for (i = 0; i < MAX_VPS; i++) {
-        u32 k = (rr_cursor + i) % MAX_VPS;
-        Vp *v = &VPS[k];
-        Partition *p;
-        if (!v->used || v->state != VS_RUNNING) continue;
-        p = &PARTS[v->part];
-        if (p->state != PS_RUNNING || !p->has_guest || !p->used) continue;
+        k = (rr_cursor + i) % MAX_VPS;
+        if (!VPS[k].used || VPS[k].state != VS_RUNNING || VPS[k].part != best - 1u) continue;
+        if (PARTS[VPS[k].part].state != PS_RUNNING || !PARTS[VPS[k].part].has_guest) continue;
         rr_cursor = (k + 1u) % MAX_VPS;
-        return v;
+        return &VPS[k];
     }
     return 0;
 }
@@ -803,11 +1108,30 @@ u32 hv_vm_entry(u32 vp) {
     if (!v || v->state != VS_RUNNING) return 0;
     p = &PARTS[v->part];
     if (p->state != PS_RUNNING || !p->has_guest) return 0;
-    ran = guest_run((u32)(p - PARTS) + 1u, (u32)(v - VPS) + 1u, ENTRY_BUDGET);
+    if (v->vmx_exit_reason == VMX_EXIT_PREEMPT_TIMER) return 0;
+    if (p->vtl_enabled && v->vtl_interrupt_pending[VTL1]) {
+        v->vtl_interrupt_delivered[VTL1] = v->vtl_interrupt_vector[VTL1];
+        v->vtl_interrupt_pending[VTL1] = 0u;
+        p->current_vtl = VTL1;
+    }
+    if (v->vmx_on && v->vmcs_state == 2u && v->vmx_guest_if && v->ipi_pending) {
+        v->vmx_interrupt_delivered = v->vmx_interrupt_info;
+        v->ipi_pending = 0u; v->vmx_interrupt_window = 0u;
+    }
+    if (v->ipi_pending) { v->ipi_delivered = v->ipi_vector; v->ipi_pending = 0u; }
+    publish_reference_tsc(v);
+    if (v->isa_active) {
+        /* The ISA path is resumable at every instruction boundary.  The
+           legacy staged image remains available for the desktop boot, while
+           secure VTL1 and nested L2 images take this mediated path. */
+        ran = hv_isa_step((u32)(v - VPS) + 1u, ENTRY_BUDGET);
+    } else {
+        ran = guest_run(part_id_of(p), (u32)(v - VPS) + 1u, ENTRY_BUDGET);
+    }
     v->instr += ran;
     /* isolation check: the guest's guard pages must be untouched */
     if (canary_check(p)) return 0;
-    if (guest_field((u32)(p - PARTS) + 1u, GF_HALTED)) {
+    if ((v->isa_active && v->isa_halted) || (!v->isa_active && guest_field(part_id_of(p), GF_HALTED))) {
         v->state = VS_HALTED;
         if (p->state == PS_RUNNING) p->state = PS_STOPPED;
     }
@@ -839,6 +1163,7 @@ u32 hv_init(u32 ref_time_ms, u32 max_partitions, u32 max_vps, u32 phys_bytes) {
     u32 pfn;
     memset(PARTS, 0, sizeof(PARTS));
     memset(VPS, 0, sizeof(VPS));
+    memset(VMX_FIELDS, 0, sizeof(VMX_FIELDS)); memset(VMX_EPT, 0, sizeof(VMX_EPT)); memset(VMX_EPT_AD, 0, sizeof(VMX_EPT_AD)); memset(VMX_EPT_TABLE, 0, sizeof(VMX_EPT_TABLE));
     memset(CHANS, 0, sizeof(CHANS));
     memset(PAGES, 0, sizeof(PAGES));
     HLOG_LEN = 0;
@@ -852,7 +1177,7 @@ u32 hv_init(u32 ref_time_ms, u32 max_partitions, u32 max_vps, u32 phys_bytes) {
     g_hypercalls = g_slat_faults = g_owned = g_present = g_deposits = 0;
     g_slices = g_preemptions = g_ctx_switches = g_idle_slices = 0;
     rr_cursor = 0;
-    g_next_chid = 1;
+    vmx_feature_control_reg = 0;
     for (i = 0; i < PAGE; i++) CANARY_PAT[i] = (u8)(0xA5u ^ (u8)(i * 7u));
     /* the root partition: created here and never deletable */
     r = &PARTS[0];
@@ -860,6 +1185,9 @@ u32 hv_init(u32 ref_time_ms, u32 max_partitions, u32 max_vps, u32 phys_bytes) {
     r->state = PS_RUNNING;
     r->is_root = 1;
     r->parent = 0xFFFFFFFFu;
+    r->priv_lo = HV_ROOT_PRIV_LO;
+    r->priv_hi = HV_ROOT_PRIV_HI;
+    r->weight = 1u; r->sched_left = 0; r->props[0] = r->priv_lo; r->props[1] = r->priv_hi;
     memcpy(r->name, "ROOT", 4);
     r->name_len = 4;
     /* reserve PFN 0 so that alloc_run()'s 0 return is unambiguously a failure */
@@ -876,7 +1204,7 @@ u32 hv_init(u32 ref_time_ms, u32 max_partitions, u32 max_vps, u32 phys_bytes) {
         /* the root partition gets a small identity window so JS can deposit */
         for (i = 0; i < 8u; i++) {
             pfn = alloc_run(1u);
-            if (pfn) { pages_own(pfn, 1u, 0u); PAGES[pfn].mapped = 1; PAGES[pfn].gpa = i * PAGE; PAGES[pfn].flags = 3; r->slat[i] = (pfn << 2) | 3u; g_owned++; g_present++; g_deposits++; r->mapped_pages++; r->deposits++; }
+            if (pfn) { pages_own(pfn, 1u, 0u); PAGES[pfn].mapped = 1; PAGES[pfn].gpa = i * PAGE; PAGES[pfn].flags = SLAT_R | SLAT_W | SLAT_X; r->slat[i] = (pfn << 3) | (SLAT_R | SLAT_W | SLAT_X); g_owned++; g_present++; g_deposits++; r->mapped_pages++; r->deposits++; }
         }
     }
     g_inited = 1;
@@ -901,7 +1229,7 @@ u32 hv_root_partition(void) { return 1u; }
 /* ------------------------------------------------------------- partitions */
 u32 hv_partition_create(u32 name_ptr, u32 name_len);
 u32 hv_partition_create(u32 name_ptr, u32 name_len) {
-    u32 i, n = 0;
+    u32 i, n = 0, generation = 0;
     Partition *p = 0;
     const char *nm = (const char *)name_ptr;
     for (i = 0; i < MAX_PARTS; i++) {
@@ -910,18 +1238,23 @@ u32 hv_partition_create(u32 name_ptr, u32 name_len) {
     }
     if (n >= g_max_parts) return 0;
     if (!p) return 0;
+    generation = p->generation;
     memset(p, 0, sizeof(*p));
     p->used = 1;
     p->state = PS_CREATED;
     p->parent = 0;
+    p->generation = generation;
+    p->priv_lo = HV_CHILD_PRIV_LO;
+    p->priv_hi = HV_CHILD_PRIV_HI;
+    p->weight = 1u; p->sched_left = 0; p->props[0] = p->priv_lo; p->props[1] = p->priv_hi;
     if (name_len > NAME_LEN - 1u) name_len = NAME_LEN - 1u;
     if (name_ptr && name_len) memcpy(p->name, nm, name_len);
     else { memcpy(p->name, "PARTITION", 9); name_len = 9; }
     p->name[name_len] = 0;
     p->name_len = name_len;
-    log_str("hv: partition "); log_num(p - PARTS + 1u);
+    log_str("hv: partition "); log_num(part_id_of(p));
     log_str(" created (\""); log_str(p->name); log_str("\")\n");
-    return (u32)(p - PARTS) + 1u;
+    return part_id_of(p);
 }
 
 i32 hv_partition_init(u32 part);
@@ -953,8 +1286,8 @@ i32 hv_partition_init(u32 part) {
             pfn = first + 1u + i;
             PAGES[pfn].mapped = 1;
             PAGES[pfn].gpa = i << PAGE_SHIFT;
-            PAGES[pfn].flags = 3;
-            p->slat[i] = (pfn << 2) | 3u;             /* present + writable  */
+            PAGES[pfn].flags = SLAT_R | SLAT_W | SLAT_X;
+            p->slat[i] = (pfn << 3) | (SLAT_R | SLAT_W | SLAT_X); /* R/W/X */
             g_present++;
         }
         p->mapped_pages = GPA_PAGES;
@@ -964,7 +1297,7 @@ i32 hv_partition_init(u32 part) {
     for (i = 0; i < GPA_PAGES; i++) memset(&PHYS[((p->canary_lo + 1u + i) << PAGE_SHIFT)], 0, PAGE);
     p->has_guest = 1;
     p->state = PS_INITIALISED;
-    guest_reset((u32)(p - PARTS) + 1u, p->vps[0]);
+    guest_reset(part_id_of(p), p->vps[0]);
     {
         Vp *v = vp_of(p->vps[0]);
         if (v) { v->simp = SIMP_GPA; v->siefp = SIEFP_GPA; v->scontrol = 1u; }
@@ -973,10 +1306,12 @@ i32 hv_partition_init(u32 part) {
     c = 0;
     for (i = 0; i < MAX_CHANNELS; i++) if (!CHANS[i].used) { c = &CHANS[i]; break; }
     if (c) {
+        u32 generation = c->generation;
         memset(c, 0, sizeof(*c));
         c->used = 1;
-        c->chid = g_next_chid++;
-        c->part = (u32)(p - PARTS) + 1u;
+        c->generation = generation;
+        c->chid = chan_id_of(c);
+        c->part = part_id_of(p);
         c->state = CH_OFFERED;
         c->ring_gpa = OUT_RING_GPA;
         c->offer_lo = 0x98C00000u | c->chid;
@@ -986,11 +1321,11 @@ i32 hv_partition_init(u32 part) {
         offer[1] = c->offer_lo;
         offer[2] = c->offer_hi;
         offer[3] = 1u;
-        ring_post((u32)(p - PARTS) + 1u, OUT_RING_GPA, VMB_OFFER, (const u8 *)offer, 16u);
+        ring_post(part_id_of(p), OUT_RING_GPA, VMB_OFFER, (const u8 *)offer, 16u);
         log_str("hv: VMBus channel "); log_num(c->chid);
-        log_str(" offered to partition "); log_num(p - PARTS + 1u); log_char('\n');
+        log_str(" offered to partition "); log_num(part_id_of(p)); log_char('\n');
     }
-    log_str("hv: partition "); log_num(p - PARTS + 1u);
+    log_str("hv: partition "); log_num(part_id_of(p));
     log_str(" initialised: window 0x0.."); log_hex(GPA_LIMIT);
     log_str(" plus canary pages at "); log_hex(p->canary_lo << PAGE_SHIFT);
     log_char(' '); log_hex(p->canary_hi << PAGE_SHIFT); log_char('\n');
@@ -1073,12 +1408,17 @@ i32 hv_partition_delete(u32 part) {
     }
     p->vp_count = 0;
     for (i = 0; i < MAX_CHANNELS; i++)
-        if (CHANS[i].used && CHANS[i].part == part) { CHANS[i].state = CH_CLOSED; CHANS[i].used = 0; }
+        if (CHANS[i].used && CHANS[i].part == part) {
+            CHANS[i].state = CH_CLOSED;
+            CHANS[i].used = 0;
+            CHANS[i].generation++;
+        }
     part_release_window(p);
     log_str("hv: partition "); log_num(part); log_str(" deleted (memory returned)\n");
     p->state = PS_DELETED;
     p->used = 0;
     p->has_guest = 0;
+    p->generation++;
     return 0;
 }
 
@@ -1106,13 +1446,14 @@ i32 hv_partition_reset(u32 part) {
 /* partition_field:
    0 id  1 state  2 name ptr  3 name len  4 vp count  5 mapped pages
    6 memory bytes  7 deposits  8 hypercalls  9 faults  10 runs  11 is_root
-   12 parent  13 canary faults  14 has guest  15 vmbus channel                */
+   12 parent  13 canary faults  14 has guest  15 vmbus channel
+   16 privilege mask low  17 privilege mask high                           */
 u32 hv_partition_field(u32 part, u32 f);
 u32 hv_partition_field(u32 part, u32 f) {
     Partition *p = part_of(part);
     if (!p) return 0;
     switch (f) {
-    case 0: return part;
+    case 0: return part_id_of(p);
     case 1: return p->state;
     case 2: return (u32)(uintptr_t)p->name;
     case 3: return p->name_len;
@@ -1128,14 +1469,45 @@ u32 hv_partition_field(u32 part, u32 f) {
     case 13: return p->canary_faults;
     case 14: return p->has_guest;
     case 15: return p->channel;
+    case 16: return p->priv_lo;
+    case 17: return p->priv_hi;
+    case 18: return p->weight;
+    case 19: return p->vtl_cap;
     default: return 0;
     }
+}
+i32 hv_partition_set_property(u32 part, u32 property, u32 value) {
+    Partition *p = part_of(part), *root = &PARTS[0];
+    if (!p || property > 3u) return HV_STATUS_INVALID_PARAMETER;
+    if (property <= 1u) {
+        if (!root->is_root || (p->is_root == 0u && value & ~((property == 0u) ? HV_ROOT_PRIV_LO : HV_ROOT_PRIV_HI)))
+            return HV_STATUS_ACCESS_DENIED;
+        if (property == 0u) p->priv_lo = value; else p->priv_hi = value;
+        p->props[property] = value;
+    } else if (property == 2u) {
+        if (!value || value > 100u) return HV_STATUS_INVALID_PARAMETER;
+        p->weight = value; p->sched_left = 0; p->props[2] = value;
+    } else { p->vtl_cap = value ? 1u : 0u; p->props[3] = p->vtl_cap; }
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_partition_set_weight(u32 part, u32 weight) { return hv_partition_set_property(part, 2u, weight); }
+u32 hv_partition_get_property(u32 part, u32 property) {
+    Partition *p = part_of(part);
+    if (!p || property > 3u) return 0;
+    return p->props[property];
 }
 u32 hv_partition_count(void);
 u32 hv_partition_count(void) {
     u32 i, n = 0;
     for (i = 0; i < MAX_PARTS; i++) if (PARTS[i].used) n++;
     return n;
+}
+/* Enumerate the external id for a slot.  Callers must use this instead of
+   guessing that the slot number is still a live id after deletion/reuse. */
+u32 hv_partition_id_at(u32 slot);
+u32 hv_partition_id_at(u32 slot) {
+    if (slot >= MAX_PARTS || !PARTS[slot].used) return 0;
+    return part_id_of(&PARTS[slot]);
 }
 u32 hv_partition_vp(u32 part, u32 idx);
 u32 hv_partition_vp(u32 part, u32 idx) {
@@ -1188,13 +1560,13 @@ u32 hv_vp_count(void) {
 u32 hv_vp_register(u32 vp, u32 which);
 u32 hv_vp_register(u32 vp, u32 which) {
     Vp *v = vp_of(vp);
-    if (!v || which > 3u) return 0;
+    if (!v || which > 31u) return 0;
     return v->regs[which];
 }
 i32 hv_vp_set_register(u32 vp, u32 which, u32 value);
 i32 hv_vp_set_register(u32 vp, u32 which, u32 value) {
     Vp *v = vp_of(vp);
-    if (!v || which > 3u) return HV_STATUS_INVALID_PARAMETER;
+    if (!v || which > 31u) return HV_STATUS_INVALID_PARAMETER;
     v->regs[which] = value;
     return 0;
 }
@@ -1217,14 +1589,14 @@ i32 hv_map_gpa(u32 part, u32 gpa, u32 page_count, u32 flags) {
     Partition *p = part_of(part);
     u32 i;
     if (!p || !page_count || (gpa & (PAGE - 1u)) || flags == 0u) return HV_STATUS_INVALID_PARAMETER;
-    if (flags > 3u) return HV_STATUS_INVALID_PARAMETER;
+    if (flags > (SLAT_R | SLAT_W | SLAT_X)) return HV_STATUS_INVALID_PARAMETER;
     if (gpa + (page_count << PAGE_SHIFT) > GPA_LIMIT) return HV_STATUS_INVALID_PARAMETER;
     for (i = 0; i < page_count; i++) {
         u32 a = gpa + (i << PAGE_SHIFT);
         u32 cur = p->slat[a >> PAGE_SHIFT];
         u32 pfn;
         if (cur) {
-            pfn = cur >> 2;
+            pfn = cur >> 3;
         } else {
             pfn = alloc_run(1u);
             if (!pfn) return HV_STATUS_INSUFFICIENT_MEM;
@@ -1235,7 +1607,7 @@ i32 hv_map_gpa(u32 part, u32 gpa, u32 page_count, u32 flags) {
             PAGES[pfn].gpa = a;
         }
         slat_set(p, a, pfn, flags);
-        if (flags & 2u) {
+        if (flags & SLAT_R) {
             if (!PAGES[pfn].mapped) { PAGES[pfn].mapped = 1; g_present++; p->mapped_pages++; }
         } else {
             if (PAGES[pfn].mapped) { PAGES[pfn].mapped = 0; g_present--; if (p->mapped_pages) p->mapped_pages--; }
@@ -1255,10 +1627,10 @@ i32 hv_unmap_gpa(u32 part, u32 gpa, u32 page_count) {
         u32 e = p->slat[a >> PAGE_SHIFT];
         u32 pfn;
         if (!e) continue;
-        pfn = e >> 2;
+        pfn = e >> 3;
         p->slat[a >> PAGE_SHIFT] = 0;
         if (PAGES[pfn].mapped) { PAGES[pfn].mapped = 0; g_present--; if (p->mapped_pages) p->mapped_pages--; }
-        if (PAGES[pfn].owner == part) {
+        if (PAGES[pfn].owner == (u32)(p - PARTS) + 1u) {
             PAGES[pfn].owner = 0;
             PAGES[pfn].gpa = 0;
             PAGES[pfn].flags = 0;
@@ -1266,6 +1638,17 @@ i32 hv_unmap_gpa(u32 part, u32 gpa, u32 page_count) {
         }
     }
     return 0;
+}
+i32 hv_withdraw_memory(u32 part, u32 pfn);
+i32 hv_withdraw_memory(u32 part, u32 pfn) {
+    Partition *p = part_of(part);
+    if (!p || !pfn || pfn >= HOST_PAGES) return HV_STATUS_INVALID_PARAMETER;
+    if (PAGES[pfn].owner != (u32)(p - PARTS) + 1u) return HV_STATUS_ACCESS_DENIED;
+    if (PAGES[pfn].mapped) return HV_STATUS_BAD_PART_STATE;
+    PAGES[pfn].dirty = 0;
+    free_run(pfn, 1u, (u32)(p - PARTS));
+    if (p->deposits) p->deposits--;
+    return HV_STATUS_SUCCESS;
 }
 u32 hv_gpa_state(u32 part, u32 gpa);
 u32 hv_gpa_state(u32 part, u32 gpa) {
@@ -1291,7 +1674,7 @@ u32 hv_probe_read_gpa(u32 part, u32 gpa) {
     Partition *p = part_of(part);
     u32 f;
     if (!p) return HV_STATUS_INVALID_PARAMETER;
-    if (!slat_pfn(p, gpa, &f) || !(f & 2u)) { part_fault(p, gpa, "probe read"); return HV_STATUS_SLAT_FAULT; }
+    if (!slat_pfn(p, gpa, &f) || !(f & SLAT_R)) { part_fault(p, gpa, "probe read"); return HV_STATUS_SLAT_FAULT; }
     return 0;
 }
 u32 hv_probe_write_gpa(u32 part, u32 gpa);
@@ -1299,9 +1682,20 @@ u32 hv_probe_write_gpa(u32 part, u32 gpa) {
     Partition *p = part_of(part);
     u32 f;
     if (!p) return HV_STATUS_INVALID_PARAMETER;
-    if (!slat_pfn(p, gpa, &f) || !(f & 2u)) { part_fault(p, gpa, "probe write"); return HV_STATUS_SLAT_FAULT; }
-    if (!(f & 1u)) { part_fault(p, gpa, "probe write to read-only page"); return HV_STATUS_SLAT_FAULT; }
+    if (!slat_pfn(p, gpa, &f) || !(f & SLAT_R)) { part_fault(p, gpa, "probe write/read"); return HV_STATUS_SLAT_FAULT; }
+    if (!(f & SLAT_W)) { part_fault(p, gpa, "probe write to read-only page"); return HV_STATUS_SLAT_FAULT; }
     return 0;
+}
+u32 hv_probe_execute_gpa(u32 part, u32 gpa);
+u32 hv_probe_execute_gpa(u32 part, u32 gpa) {
+    Partition *p = part_of(part);
+    u32 f;
+    if (!p) return HV_STATUS_INVALID_PARAMETER;
+    if (!slat_pfn(p, gpa, &f) || !(f & SLAT_X)) {
+        part_fault(p, gpa, "probe execute");
+        return HV_STATUS_SLAT_FAULT;
+    }
+    return HV_STATUS_SUCCESS;
 }
 u32 hv_slat_faults(u32 part);
 u32 hv_slat_faults(u32 part) {
@@ -1319,8 +1713,20 @@ u32 hv_page_field(u32 page, u32 f) {
     case 1: return PAGES[page].gpa;
     case 2: return PAGES[page].flags;
     case 3: return PAGES[page].mapped;
+    case 4: return PAGES[page].dirty;
     default: return 0;
     }
+}
+u32 hv_gpa_access_state(u32 part, u32 gpa, u32 page_count, u32 dst) {
+    Partition *p = part_of(part); u32 i, out = 0;
+    if (!p || !page_count || !dst || (gpa & (PAGE - 1u)) || gpa + (page_count << PAGE_SHIFT) > GPA_LIMIT)
+        return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < page_count; i++) {
+        u32 a = gpa + (i << PAGE_SHIFT), e = p->slat[a >> PAGE_SHIFT], d = 0;
+        if (e) { u32 pf = e >> 3; d = PAGES[pf].dirty ? 1u : 0u; PAGES[pf].dirty = 0; }
+        ((u8 *)dst)[i] = (u8)d; out += d;
+    }
+    return out;
 }
 /* memory_stats: 0 total 1 mapped 2 reserved 3 free 4 deposits */
 u32 hv_memory_stats(u32 which);
@@ -1341,7 +1747,7 @@ static u32 hc_validate(Partition *p, u32 gpa, u32 len) {
     if (!len) return 1u;
     while (off < len) {
         u32 a = gpa + off, f;
-        if (!slat_pfn(p, a, &f) || !(f & 2u)) {
+        if (!slat_pfn(p, a, &f) || !(f & SLAT_R)) {
             part_fault(p, a, "hypercall buffer");
             return 0u;
         }
@@ -1359,7 +1765,7 @@ u32 hv_vmcall(u32 vp) {
     u32 st = HV_STATUS_SUCCESS;
     if (!v) return HV_STATUS_INVALID_PARAMETER;
     p = &PARTS[v->part];
-    pid = (u32)(p - PARTS) + 1u;
+    pid = part_id_of(p);
     v->hypercalls++;
     p->hypercalls++;
     g_hypercalls++;
@@ -1397,6 +1803,7 @@ u32 hv_vmcall(u32 vp) {
     }
     case HC_CREATE_PART: {
         u32 out[1], np;
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_CREATE_PARTS)) { st = HV_STATUS_ACCESS_DENIED; break; }
         np = hv_partition_create(0u, 0u);
         if (!np) { st = HV_STATUS_INSUFFICIENT_MEM; break; }
         out[0] = np;
@@ -1405,13 +1812,14 @@ u32 hv_vmcall(u32 vp) {
         break;
     }
     case HC_INIT_PART: {
-        u32 target = f.arg0 ? f.arg0 : (u32)(p - PARTS) + 1u;
+        u32 target = f.arg0 ? f.arg0 : part_id_of(p);
         i32 r = hv_partition_init(target);
         st = r ? (u32)r : HV_STATUS_SUCCESS;
         break;
     }
     case HC_DEPOSIT_MEM: {
         u32 out[1], n = 0, i;
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_MEMORY_POOL)) { st = HV_STATUS_ACCESS_DENIED; break; }
         if (!f.arg1) { st = HV_STATUS_INVALID_PARAMETER; break; }
         for (i = 0; i < f.arg1; i++) {
             u32 a = f.arg0 + (i << PAGE_SHIFT), pfn, cur;
@@ -1425,7 +1833,7 @@ u32 hv_vmcall(u32 vp) {
                 g_deposits++;
                 p->deposits++;
                 PAGES[pfn].gpa = a;
-                p->slat[a >> PAGE_SHIFT] = (pfn << 2);
+                p->slat[a >> PAGE_SHIFT] = (pfn << 3);
             }
             n++;
         }
@@ -1433,25 +1841,34 @@ u32 hv_vmcall(u32 vp) {
         if (f.out_gpa && !hv_g_store(pid, f.out_gpa, (u32)out, 4u)) st = HV_STATUS_SLAT_FAULT;
         break;
     }
+    case HC_WITHDRAW_MEM:
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_MEMORY_POOL)) st = HV_STATUS_ACCESS_DENIED;
+        else st = (u32)hv_withdraw_memory(part_id_of(p), f.arg0);
+        break;
     case HC_CREATE_VP: {
-        u32 out[1], nv = hv_vp_create((u32)(p - PARTS) + 1u, f.arg0);
+        u32 out[1], nv;
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_START_VP)) { st = HV_STATUS_ACCESS_DENIED; break; }
+        nv = hv_vp_create(part_id_of(p), f.arg0);
         if (!nv) { st = HV_STATUS_INSUFFICIENT_MEM; break; }
         out[0] = nv;
         if (f.out_gpa && !hv_g_store(pid, f.out_gpa, (u32)out, 4u)) st = HV_STATUS_SLAT_FAULT;
         break;
     }
     case HC_SET_VP_REGISTERS:
-        if (f.arg0 > 3u) { st = HV_STATUS_INVALID_PARAMETER; break; }
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_VP_REGISTERS)) { st = HV_STATUS_ACCESS_DENIED; break; }
+        if (f.arg0 > 31u) { st = HV_STATUS_INVALID_PARAMETER; break; }
         v->regs[f.arg0] = f.arg1;
         break;
     case HC_MAP_GPA_PAGES: {
-        i32 r = hv_map_gpa((u32)(p - PARTS) + 1u, f.arg0, f.arg1, f.arg2 & 3u);
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_CREATE_PARTS)) { st = HV_STATUS_ACCESS_DENIED; break; }
+        i32 r = hv_map_gpa(part_id_of(p), f.arg0, f.arg1, f.arg2 & (SLAT_R | SLAT_W | SLAT_X));
         st = r ? (u32)r : HV_STATUS_SUCCESS;
         break;
     }
     case HC_POST_MESSAGE: {
         SynicMsg m;
         u32 rv = root_vp_id();
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_POST_MESSAGES)) { st = HV_STATUS_ACCESS_DENIED; break; }
         if (!f.arg0) { st = HV_STATUS_INVALID_PARAMETER; break; }
         if (!hc_validate(p, f.arg0, MSG_SIZE)) { st = HV_STATUS_SLAT_FAULT; break; }
         if (!hv_g_load(pid, f.arg0, (u32)&m, MSG_SIZE)) { st = HV_STATUS_SLAT_FAULT; break; }
@@ -1464,10 +1881,13 @@ u32 hv_vmcall(u32 vp) {
     }
     case HC_SIGNAL_EVENT: {
         u32 flag[1];
+        if (!part_has_priv(p, 0u, HV_PRIV_HI_SIGNAL_EVENTS)) { st = HV_STATUS_ACCESS_DENIED; break; }
         v->events++;
-        if (f.arg0 < 4u) v->sint_count[f.arg0]++;
+        if (f.arg0 >= 16u || f.arg1 >= 16u) { st = HV_STATUS_INVALID_PARAMETER; break; }
+        v->event_flags[f.arg1] = 1u; v->sint_pending[f.arg0] = 1u;
+        if (!v->sint_masked[f.arg0]) v->sint_count[f.arg0]++;
         if (v->siefp) {
-            flag[0] = f.arg1;
+            flag[0] = 1u << (f.arg1 & 31u);
             hv_g_store(pid, v->siefp, (u32)flag, 4u);
         }
         break;
@@ -1482,7 +1902,7 @@ u32 hv_vmcall(u32 vp) {
         for (i = 0; i < MAX_CHANNELS; i++) {
             Channel *c = &CHANS[i];
             if (!c->used) continue;
-            if (c->part != (u32)(p - PARTS) + 1u) continue;
+            if (c->part != part_id_of(p)) continue;
             if (c->offer_lo != f.arg0 || c->offer_hi != f.arg1) continue;
             c->state = CH_OPEN;
             out[0] = c->chid;
@@ -1493,9 +1913,7 @@ u32 hv_vmcall(u32 vp) {
         break;
     }
     case HC_VMBUS_CLOSE: {
-        Channel *c = chan_of(f.arg0);
-        if (!c) { st = HV_STATUS_INVALID_PARAMETER; break; }
-        c->state = CH_CLOSED;
+        st = (u32)hv_vmbus_close(f.arg0);
         break;
     }
     case HC_VMBUS_SIGNAL: {
@@ -1522,14 +1940,14 @@ u32 hv_vmcall(u32 vp) {
     case HC_CPUID: {
         u32 out[4];
         if (!f.out_gpa) { st = HV_STATUS_INVALID_PARAMETER; break; }
-        cpuid_leaf(f.arg0, f.arg1, out);
+        cpuid_leaf(f.arg0, f.arg1, out, p->priv_lo, p->priv_hi);
         if (!hv_g_store(pid, f.out_gpa, (u32)out, 16u)) st = HV_STATUS_SLAT_FAULT;
         break;
     }
     case HC_HALT:
         v->state = VS_HALTED;
         p->state = PS_STOPPED;
-        log_str("hv: partition "); log_num(p - PARTS + 1u); log_str(" halted by guest\n");
+        log_str("hv: partition "); log_num(part_id_of(p)); log_str(" halted by guest\n");
         break;
     default:
         st = HV_STATUS_NOT_IMPLEMENTED;
@@ -1542,6 +1960,42 @@ u32 hv_vmcall(u32 vp) {
 
 u32 hv_hypercall_count(void);
 u32 hv_hypercall_count(void) { return g_hypercalls; }
+
+/* TLFS control-word path.  The legacy frame above remains the compatibility
+   path; this bounded path models repeatable signal/notify hypercalls and
+   exposes partial progress exactly as a real rep hypercall does. */
+u32 hv_hypercall_control(u32 vp, u32 control_lo, u32 control_hi,
+                         u32 in_gpa, u32 out_gpa, u32 arg0, u32 arg1,
+                         u32 arg2, u32 arg3) {
+    Vp *v = vp_of(vp); u32 code, total, start, budget = 4u;
+    (void)in_gpa; (void)out_gpa; (void)arg2; (void)arg3;
+    if (!v) return HV_STATUS_INVALID_PARAMETER;
+    code = control_lo & 0xFFFFu;
+    total = control_hi & 0xFFFFu; start = control_hi >> 16;
+    if (!total) return HV_STATUS_INVALID_PARAMETER;
+    if (!v->rep_active || v->rep_code != code || start == 0u) {
+        v->rep_code = code; v->rep_total = total; v->rep_done = start; v->rep_start = start;
+        v->rep_active = 1u; v->rep_status = HV_STATUS_REP_NOT_COMPLETE;
+    }
+    while (v->rep_done < v->rep_total && budget--) {
+        if (code == HC_SIGNAL_EVENT) {
+            if (arg0 >= 16u || arg1 >= 16u) { v->rep_status = HV_STATUS_INVALID_PARAMETER; break; }
+            v->events++; v->event_flags[arg1] = 1u; v->sint_pending[arg0] = 1u;
+            if (!v->sint_masked[arg0]) v->sint_count[arg0]++;
+            else v->sint_dropped[arg0]++;
+        }
+        else if (code == HC_VMBUS_SIGNAL) { Channel *c = chan_of(arg0); if (!c) { v->rep_status = HV_STATUS_INVALID_PARAMETER; break; } c->messages++; c->out_bytes += arg1; }
+        else { v->rep_status = HV_STATUS_NOT_IMPLEMENTED; break; }
+        v->rep_done++;
+    }
+    if (v->rep_status == HV_STATUS_NOT_IMPLEMENTED || v->rep_status == HV_STATUS_INVALID_PARAMETER) { v->rep_active = 0; return v->rep_status; }
+    if (v->rep_done >= v->rep_total) { v->rep_status = HV_STATUS_SUCCESS; v->rep_active = 0; return HV_STATUS_SUCCESS; }
+    return HV_STATUS_REP_NOT_COMPLETE;
+}
+u32 hv_rep_field(u32 vp, u32 f) {
+    Vp *v = vp_of(vp); if (!v) return 0;
+    switch (f) { case 0: return v->rep_done; case 1: return v->rep_total; case 2: return v->rep_active; case 3: return v->rep_status; default: return 0; }
+}
 
 /* ---------------------------------------------------------- MSR / CPUID API */
 u32 hv_query_msr(u32 vp, u32 msr, u32 out_ptr);
@@ -1580,6 +2034,21 @@ u32 hv_msr_log_field(u32 part, u32 i, u32 f) {
     default: return 0;
     }
 }
+i32 hv_reference_tsc_set(u32 vp, u32 sequence, u32 scale, u32 offset_lo, u32 offset_hi) {
+    Vp *v = vp_of(vp);
+    if (!v || !scale) return HV_STATUS_INVALID_PARAMETER;
+    v->ref_seq = sequence; v->ref_scale = scale; v->ref_offset_lo = offset_lo; v->ref_offset_hi = offset_hi;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_reference_tsc_read(u32 vp, u32 dst) {
+    Vp *v = vp_of(vp); u64 t, off;
+    u32 out[3];
+    if (!v || !v->ref_scale || !dst) return HV_STATUS_INVALID_PARAMETER;
+    t = (u64)REF_TIME * 10000ULL * (u64)v->ref_scale;
+    off = ((u64)v->ref_offset_hi << 32) | v->ref_offset_lo;
+    t += off; out[0] = v->ref_seq; out[1] = (u32)t; out[2] = (u32)(t >> 32);
+    memcpy((u8 *)dst, out, 12u); return HV_STATUS_SUCCESS;
+}
 
 /* ------------------------------------------------- SynIC / timer / VMBus */
 u32 hv_synic_field(u32 vp, u32 which);
@@ -1595,17 +2064,22 @@ u32 hv_synic_field(u32 vp, u32 which) {
     case 5: return v->msg_dropped;
     case 6: return v->events;
     case 7: return (v->msg_tail + MSG_QUEUE - v->msg_head) % MSG_QUEUE;
+    case 8: { u32 n = 0, s; for (s = 0; s < 16u; s++) n += v->sint_pending[s] ? 1u : 0u; return n; }
+    case 9: { u32 n = 0, s; for (s = 0; s < 16u; s++) n += v->event_flags[s] ? 1u : 0u; return n; }
+    case 10: return v->msg_head != v->msg_tail;
     default: return 0;
     }
 }
 u32 hv_sint_field(u32 vp, u32 sint, u32 which);
 u32 hv_sint_field(u32 vp, u32 sint, u32 which) {
     Vp *v = vp_of(vp);
-    if (!v || sint > 3u) return 0;
+    if (!v || sint > 15u) return 0;
     switch (which) {
     case 0: return v->sint_vec[sint];
     case 1: return v->sint_masked[sint];
     case 2: return v->sint_count[sint];
+    case 3: return v->sint_auto_eoi[sint];
+    case 4: return v->sint_dropped[sint];
     default: return 0;
     }
 }
@@ -1618,6 +2092,7 @@ u32 hv_message_pop(u32 vp, u32 dst, u32 max) {
     if (max && max < n) n = max;
     if (dst) memcpy((u8 *)dst, &v->msgs[v->msg_head], n);
     v->msg_head = (v->msg_head + 1u) % MSG_QUEUE;
+    v->msg_consumed = 1u;
     return n;
 }
 u32 hv_message_push(u32 vp, u32 src, u32 len);
@@ -1631,6 +2106,70 @@ u32 hv_message_push(u32 vp, u32 src, u32 len) {
         memcpy(&m, (const u8 *)src, len);
         return synic_post(v, &m);
     }
+}
+u32 hv_synic_eom(u32 vp) {
+    Vp *v = vp_of(vp); u32 s, redeliver = 16u;
+    if (!v) return HV_STATUS_INVALID_PARAMETER;
+    v->eom++;
+    if (v->msg_consumed && v->msg_head != v->msg_tail) redeliver = v->msgs[v->msg_head].type & 15u;
+    for (s = 0; s < 16u; s++) if (v->sint_pending[s]) {
+        if (!v->sint_masked[s]) v->sint_count[s]++;
+        v->sint_pending[s] = 0;
+    }
+    if (redeliver < 16u) {
+        v->sint_pending[redeliver] = 1u;
+        if (!v->sint_masked[redeliver]) v->sint_count[redeliver]++;
+    }
+    v->msg_consumed = 0u;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_synic_event_field(u32 vp, u32 flag) {
+    Vp *v = vp_of(vp);
+    if (!v || flag >= 16u) return 0;
+    return v->event_flags[flag];
+}
+u32 hv_synic_event_clear(u32 vp, u32 flag) {
+    Vp *v = vp_of(vp);
+    if (!v || flag >= 16u) return HV_STATUS_INVALID_PARAMETER;
+    v->event_flags[flag] = 0;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_send_ipi(u32 src_vp, u32 dst_vp, u32 vector) {
+    Vp *s = vp_of(src_vp), *d = vp_of(dst_vp);
+    if (!s || !d || vector > 255u || s->part != d->part) return HV_STATUS_INVALID_PARAMETER;
+    d->ipi_vector = vector; d->ipi_pending = 1u; return HV_STATUS_SUCCESS;
+}
+u32 hv_apic_field(u32 vp, u32 f) {
+    Vp *v = vp_of(vp); if (!v) return 0;
+    switch (f) { case 0: return v->tpr; case 1: return v->eoi; case 2: return v->ipi_pending; case 3: return v->ipi_vector; case 4: return v->ipi_delivered; default: return 0; }
+}
+u32 hv_apic_eoi(u32 vp) { Vp *v = vp_of(vp); if (!v) return HV_STATUS_INVALID_PARAMETER; v->eoi++; v->ipi_pending = 0; return HV_STATUS_SUCCESS; }
+u32 hv_flush_virtual_address_space(u32 part, u32 gpa) {
+    Partition *p = part_of(part); u32 i; (void)gpa;
+    if (!p) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < p->vp_count; i++) if (vp_of(p->vps[i])) {
+        Vp *v = vp_of(p->vps[i]); v->vmx_tlb_valid = 0; v->vmx_ept_generation++;
+    }
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_signal_event(u32 part, u32 connection, u32 flag) {
+    Partition *p = part_of(part); Vp *v;
+    u32 bit = 1u;
+    if (!p || connection >= p->vp_count || flag >= 16u) return HV_STATUS_INVALID_PARAMETER;
+    v = vp_of(p->vps[connection]); if (!v) return HV_STATUS_INVALID_PARAMETER;
+    v->events++; v->event_flags[flag] = 1u; v->sint_pending[flag] = 1u;
+    if (v->sint_masked[flag]) { bit = 0; v->sint_dropped[flag]++; }
+    if (bit) v->sint_count[flag]++;
+    if (v->siefp) (void)hv_mem_write(p, v->siefp + ((flag >> 5) << 2), (u32)&bit, 4u, 0u);
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_post_message(u32 part, u32 port, u32 src, u32 len) {
+    Partition *p = part_of(part); Vp *v;
+    SynicMsg m;
+    if (!p || !p->vp_count || port >= 16u || len > MSG_SIZE) return HV_STATUS_INVALID_PARAMETER;
+    v = vp_of(p->vps[0]); if (!v) return HV_STATUS_INVALID_PARAMETER;
+    memset(&m, 0, sizeof(m)); if (len) memcpy(&m, (const u8 *)src, len);
+    return synic_post(v, &m) ? HV_STATUS_SUCCESS : HV_STATUS_INSUFFICIENT_MEM;
 }
 u32 hv_timer_set(u32 vp, u32 sint, u32 period_ms, u32 oneshot);
 u32 hv_timer_set(u32 vp, u32 sint, u32 period_ms, u32 oneshot) {
@@ -1677,6 +2216,23 @@ u32 hv_guest_timer_take(u32 part) {
     if (v) { v->timer_pending = p->timer_pending; v->timer_fires = p->timer_fires; }
     return 1;
 }
+u32 hv_timer_set_n(u32 vp, u32 timer, u32 sint, u32 period_ms, u32 oneshot) {
+    Vp *v = vp_of(vp); SynthTimer *t;
+    if (!v || timer > 3u || sint > 15u || !period_ms) return HV_STATUS_INVALID_PARAMETER;
+    t = &v->stimer[timer]; memset(t, 0, sizeof(*t)); t->armed = 1u; t->sint = sint; t->period = period_ms; t->oneshot = oneshot ? 1u : 0u;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_timer_n_set_direct(u32 vp, u32 timer, u32 direct) {
+    Vp *v = vp_of(vp);
+    if (!v || timer > 3u) return HV_STATUS_INVALID_PARAMETER;
+    v->stimer[timer].direct = direct ? 1u : 0u;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_timer_n_field(u32 vp, u32 timer, u32 f) {
+    Vp *v = vp_of(vp); SynthTimer *t;
+    if (!v || timer > 3u) return 0; t = &v->stimer[timer];
+    switch (f) { case 0: return t->armed; case 1: return t->fires; case 2: return t->last; case 3: return t->pending; case 4: return t->masked; case 5: return t->sint; case 6: return t->direct; default: return 0; }
+}
 
 u32 hv_vmbus_channel_field(u32 ch, u32 f);
 u32 hv_vmbus_channel_field(u32 ch, u32 f) {
@@ -1694,14 +2250,53 @@ u32 hv_vmbus_channel_field(u32 ch, u32 f) {
     case 8: return c->dropped;
     case 9: return c->chid;
     case 10: return IN_RING_GPA;
+    case 11: return c->version;
+    case 12: return c->gpadl_gpa;
+    case 13: return c->gpadl_pages;
+    case 14: return c->interrupt_mask;
+    case 15: return c->pending_send;
+    case 16: return c->rescinded;
     default: return 0;
     }
+}
+i32 hv_vmbus_negotiate(u32 ch, u32 version) {
+    Channel *c = chan_of(ch);
+    if (!c || c->state == CH_CLOSED || (version != 1u && version != 2u)) return HV_STATUS_INVALID_PARAMETER;
+    c->version = version; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmbus_gpadl(u32 ch, u32 gpa, u32 pages) {
+    Channel *c = chan_of(ch);
+    if (!c || c->state != CH_OPEN || !pages || (gpa & (PAGE - 1u)) || gpa + (pages << PAGE_SHIFT) > GPA_LIMIT) return HV_STATUS_INVALID_PARAMETER;
+    c->gpadl_gpa = gpa; c->gpadl_pages = pages; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmbus_close(u32 ch) {
+    Channel *c = chan_of(ch);
+    if (!c || c->state == CH_CLOSED) return HV_STATUS_INVALID_PARAMETER;
+    c->state = CH_CLOSED;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vmbus_reopen(u32 ch) {
+    Channel *c = chan_of(ch);
+    if (!c || c->rescinded || c->state != CH_CLOSED) return HV_STATUS_INVALID_PARAMETER;
+    c->state = CH_OPEN; c->version = 0; c->gpadl_gpa = 0; c->gpadl_pages = 0;
+    c->interrupt_mask = 0; c->pending_send = 0;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vmbus_rescind(u32 ch) {
+    Channel *c = chan_of(ch);
+    if (!c) return HV_STATUS_INVALID_PARAMETER;
+    c->rescinded = 1u; c->state = CH_CLOSED; return HV_STATUS_SUCCESS;
 }
 u32 hv_vmbus_channel_count(void);
 u32 hv_vmbus_channel_count(void) {
     u32 i, n = 0;
     for (i = 0; i < MAX_CHANNELS; i++) if (CHANS[i].used) n++;
     return n;
+}
+u32 hv_vmbus_channel_id_at(u32 slot);
+u32 hv_vmbus_channel_id_at(u32 slot) {
+    if (slot >= MAX_CHANNELS || !CHANS[slot].used) return 0;
+    return CHANS[slot].chid;
 }
 u32 hv_vmbus_drain(u32 ch, u32 dst, u32 max);
 /* writes one framed message {u32 type, u32 len, u8 payload[]} into dst and
@@ -1723,7 +2318,7 @@ u32 hv_vmbus_inject(u32 ch, u32 src, u32 len) {
     u32 n;
     if (!c || c->state != CH_OPEN) return 0;
     n = ring_post(c->part, IN_RING_GPA, VMB_DATA, (const u8 *)src, len);
-    if (n) c->out_bytes += n; else c->dropped++;
+    if (n) { c->out_bytes += n; c->pending_send = 0; } else { c->dropped++; c->pending_send = len; }
     return n;
 }
 /* vmbus_stats: 0 channels 1 messages 2 dropped 3 in bytes 4 out bytes 5 open */
@@ -1745,6 +2340,734 @@ u32 hv_vmbus_stats(u32 which) {
     default: return 0;
     }
 }
+u32 hv_device_field(u32 part, u32 device, u32 field) {
+    Partition *p = part_of(part);
+    if (!p || device >= 6u) return 0;
+    switch (field) { case 0: return p->has_guest && !p->device_status[device]; case 1: return p->device_tx[device]; case 2: return p->device_rx[device]; case 3: return p->device_status[device]; case 4: return device; default: return 0; }
+}
+u32 hv_device_send(u32 part, u32 device, u32 src, u32 len) {
+    Partition *p = part_of(part); u32 n;
+    if (!p || device >= 6u || !p->has_guest || len > MSG_SIZE) return HV_STATUS_INVALID_PARAMETER;
+    if (p->state != PS_RUNNING) return HV_STATUS_BAD_PART_STATE;
+    if (p->device_status[device]) return HV_STATUS_BAD_PART_STATE;
+    p->device_tx[device]++;
+    if (device == 5u) {
+        p->device_status[device] = 1u; p->state = PS_STOPPED;
+        for (n = 0; n < p->vp_count; n++) if (vp_of(p->vps[n])) vp_of(p->vps[n])->state = VS_HALTED;
+        return HV_STATUS_SUCCESS;
+    }
+    if (device == 0u || device == 3u) {
+        n = hv_vmbus_inject(p->channel, src, len);
+        if (n) p->device_rx[device]++; else return HV_STATUS_INSUFFICIENT_MEM;
+    } else {
+        p->device_rx[device]++;
+    }
+    return HV_STATUS_SUCCESS;
+}
+static u32 vtl_perm(Partition *p, u32 vtl, u32 page) {
+    u32 e, f;
+    if (vtl < 2u && p->vtl_perm_valid[vtl][page]) return p->vtl_perms[vtl][page];
+    e = p->slat[page]; if (!e) return 0;
+    f = e & 7u; return f;
+}
+i32 hv_enable_partition_vtl(u32 part, u32 vtl) {
+    Partition *p = part_of(part);
+    if (!p || vtl != VTL1 || !part_has_priv(&PARTS[0], 0u, HV_PRIV_HI_VSM)) return HV_STATUS_ACCESS_DENIED;
+    p->vtl_enabled = 1u;
+    p->vtl_perms[0][0] = 7u; p->vtl_perms[1][0] = 7u;
+    p->vtl_perm_valid[0][0] = 1u; p->vtl_perm_valid[1][0] = 1u;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_enable_vp_vtl(u32 vp, u32 vtl) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v || vtl != VTL1) return HV_STATUS_INVALID_PARAMETER;
+    p = &PARTS[v->part]; if (!p->vtl_enabled) return HV_STATUS_ACCESS_DENIED;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vtl_call(u32 vp, u32 call_id, u32 arg) {
+    Vp *v = vp_of(vp); Partition *p; (void)call_id; (void)arg;
+    if (!v) return HV_STATUS_INVALID_PARAMETER; p = &PARTS[v->part];
+    if (!p->vtl_enabled || p->current_vtl != VTL0) return HV_STATUS_ACCESS_DENIED;
+    p->current_vtl = VTL1; p->vtl_calls++; return HV_STATUS_SUCCESS;
+}
+u32 hv_vtl_return(u32 vp) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v) return HV_STATUS_INVALID_PARAMETER; p = &PARTS[v->part];
+    if (p->current_vtl != VTL1) return HV_STATUS_BAD_PART_STATE;
+    p->current_vtl = VTL0; p->vtl_returns++; return HV_STATUS_SUCCESS;
+}
+i32 hv_vtl_set_register(u32 vp, u32 vtl, u32 which, u32 value) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v || vtl > VTL1 || which > 31u) return HV_STATUS_INVALID_PARAMETER;
+    p = &PARTS[v->part];
+    if (!p->vtl_enabled || p->current_vtl != vtl) return HV_STATUS_ACCESS_DENIED;
+    v->vtl_regs[vtl][which] = value;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vtl_get_register(u32 vp, u32 vtl, u32 which, u32 dst) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v || vtl > VTL1 || which > 31u || !dst) return HV_STATUS_INVALID_PARAMETER;
+    p = &PARTS[v->part];
+    if (!p->vtl_enabled || p->current_vtl != vtl) return HV_STATUS_ACCESS_DENIED;
+    *(u32 *)dst = v->vtl_regs[vtl][which];
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vtl_synic_config(u32 vp, u32 vtl, u32 sint, u32 vector, u32 masked) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v || vtl > VTL1 || sint > 15u || vector > 255u) return HV_STATUS_INVALID_PARAMETER;
+    p = &PARTS[v->part];
+    if (!p->vtl_enabled || p->current_vtl != vtl) return HV_STATUS_ACCESS_DENIED;
+    v->vtl_sint_vec[vtl][sint] = vector;
+    v->vtl_sint_masked[vtl][sint] = masked ? 1u : 0u;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vtl_synic_field(u32 vp, u32 vtl, u32 sint, u32 field) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v || vtl > VTL1 || sint > 15u || field > 3u) return 0u;
+    p = &PARTS[v->part];
+    if (!p->vtl_enabled || p->current_vtl != vtl) return 0u;
+    switch (field) {
+    case 0: return v->vtl_sint_vec[vtl][sint];
+    case 1: return v->vtl_sint_masked[vtl][sint];
+    case 2: return v->vtl_sint_pending[vtl][sint];
+    case 3: return v->vtl_sint_count[vtl][sint];
+    default: return 0u;
+    }
+}
+i32 hv_vtl_inject_interrupt(u32 vp, u32 vtl, u32 vector) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v || vtl > VTL1 || vector > 255u) return HV_STATUS_INVALID_PARAMETER;
+    p = &PARTS[v->part];
+    if (!p->vtl_enabled) return HV_STATUS_ACCESS_DENIED;
+    v->vtl_interrupt_vector[vtl] = vector;
+    v->vtl_interrupt_pending[vtl] = 1u;
+    if (vtl > p->current_vtl) p->current_vtl = vtl;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vtl_interrupt_field(u32 vp, u32 vtl, u32 field) {
+    Vp *v = vp_of(vp); Partition *p;
+    if (!v || vtl > VTL1 || field > 2u) return 0u;
+    p = &PARTS[v->part];
+    if (!p->vtl_enabled || p->current_vtl != vtl) return 0u;
+    switch (field) { case 0: return v->vtl_interrupt_pending[vtl]; case 1: return v->vtl_interrupt_vector[vtl]; case 2: return v->vtl_interrupt_delivered[vtl]; default: return 0u; }
+}
+i32 hv_modify_vtl_protection_mask(u32 part, u32 gpa, u32 pages, u32 mask) {
+    Partition *p = part_of(part); u32 i;
+    if (!p || !p->vtl_enabled || !pages || (gpa & (PAGE - 1u)) || mask > 7u || gpa + (pages << PAGE_SHIFT) > GPA_LIMIT) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < pages; i++) {
+        p->vtl_perms[0][(gpa >> PAGE_SHIFT) + i] = (u8)mask;
+        p->vtl_perm_valid[0][(gpa >> PAGE_SHIFT) + i] = 1u;
+    }
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vtl_access(u32 part, u32 vtl, u32 gpa, u32 access) {
+    Partition *p = part_of(part); u32 page, allowed;
+    if (!p || vtl > VTL1 || gpa >= GPA_LIMIT) return HV_STATUS_INVALID_PARAMETER;
+    page = gpa >> PAGE_SHIFT; allowed = vtl_perm(p, vtl, page);
+    if ((allowed & access) != access || (vtl == VTL0 && p->kdp_protected[page] && (access & VTL_ACCESS_W))) {
+        if (vtl == VTL0) { p->vtl_intercepts++; p->vtl_intercept_gpa = gpa; p->vtl_intercept_access = access; p->current_vtl = VTL1; }
+        return HV_STATUS_ACCESS_DENIED;
+    }
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vtl_field(u32 part, u32 f) {
+    Partition *p = part_of(part); if (!p) return 0;
+    switch (f) { case 0: return p->vtl_enabled; case 1: return p->current_vtl; case 2: return p->vtl_calls; case 3: return p->vtl_returns; case 4: return p->vtl_intercepts; case 5: return p->vtl_intercept_gpa; case 6: return p->vtl_intercept_access; case 7: return p->hvci_denies; case 8: return p->kdp_denies; case 9: return p->secret_len; case 10: return p->pcr; case 11: return p->hyperguard_denies; case 12: return p->vsm_code_gpa; case 13: return p->vsm_code_hash; case 14: return p->vsm_code_ready; default: return 0; }
+}
+u32 hv_page_hash(u32 part, u32 gpa);
+i32 hv_vsm_set_code(u32 part, u32 gpa, u32 hash) {
+    Partition *p = part_of(part);
+    if (!p || !p->vtl_enabled || gpa >= GPA_LIMIT || (gpa & (PAGE - 1u)) || !p->slat[gpa >> PAGE_SHIFT]) return HV_STATUS_INVALID_PARAMETER;
+    if (hv_page_hash(part, gpa) != hash) return HV_STATUS_ACCESS_DENIED;
+    p->vsm_code_gpa = gpa; p->vsm_code_hash = hash; p->vsm_code_ready = 1u; return HV_STATUS_SUCCESS;
+}
+u32 hv_vsm_field(u32 part, u32 field) {
+    Partition *p = part_of(part); if (!p || field > 2u) return 0u;
+    switch (field) { case 0: return p->vsm_code_gpa; case 1: return p->vsm_code_hash; case 2: return p->vsm_code_ready; default: return 0u; }
+}
+u32 hv_page_hash(u32 part, u32 gpa) {
+    Partition *p = part_of(part); u32 e, pf, i, h = 2166136261u;
+    if (!p || gpa >= GPA_LIMIT || (gpa & (PAGE - 1u))) return 0;
+    e = p->slat[gpa >> PAGE_SHIFT]; if (!e) return 0; pf = e >> 3;
+    for (i = 0; i < PAGE; i++) { h ^= PHYS[(pf << PAGE_SHIFT) + i]; h *= 16777619u; }
+    return h;
+}
+i32 hv_hvci_sign_page(u32 part, u32 gpa, u32 hash) {
+    Partition *p = part_of(part); u32 page;
+    if (!p || !p->vtl_enabled || gpa >= GPA_LIMIT || (gpa & (PAGE - 1u))) return HV_STATUS_INVALID_PARAMETER;
+    page = gpa >> PAGE_SHIFT; if (hv_page_hash(part, gpa) != hash) { p->hvci_denies++; return HV_STATUS_ACCESS_DENIED; }
+    p->hvci_signed[page] = 1u; return HV_STATUS_SUCCESS;
+}
+i32 hv_hvci_set_execute(u32 part, u32 gpa) {
+    Partition *p = part_of(part); u32 page;
+    if (!p || gpa >= GPA_LIMIT || (gpa & (PAGE - 1u))) return HV_STATUS_INVALID_PARAMETER;
+    page = gpa >> PAGE_SHIFT; if (!p->hvci_signed[page]) { p->hvci_denies++; return HV_STATUS_ACCESS_DENIED; }
+    p->vtl_perms[0][page] = VTL_ACCESS_R | VTL_ACCESS_X;
+    p->vtl_perm_valid[0][page] = 1u;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_kdp_protect(u32 part, u32 gpa, u32 pages) {
+    Partition *p = part_of(part); u32 i;
+    if (!p || !p->vtl_enabled || !pages || (gpa & (PAGE - 1u)) || gpa + (pages << PAGE_SHIFT) > GPA_LIMIT) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < pages; i++) {
+        p->kdp_protected[(gpa >> PAGE_SHIFT) + i] = 1u;
+        p->vtl_perms[0][(gpa >> PAGE_SHIFT) + i] = VTL_ACCESS_R;
+        p->vtl_perm_valid[0][(gpa >> PAGE_SHIFT) + i] = 1u;
+    }
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_lsa_store_secret(u32 part, u32 src, u32 len) {
+    Partition *p = part_of(part); if (!p || !src || !len || len > sizeof(p->secure_secret)) return HV_STATUS_INVALID_PARAMETER;
+    memcpy(p->secure_secret, (const u8 *)src, len); p->secret_len = len; return HV_STATUS_SUCCESS;
+}
+i32 hv_lsa_call(u32 part, u32 op, u32 src, u32 len, u32 dst) {
+    Partition *p = part_of(part); u32 i, h = 2166136261u; (void)op;
+    if (!p || !p->secret_len || !dst || len > 64u) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < p->secret_len; i++) { h ^= p->secure_secret[i]; h *= 16777619u; }
+    if (src && len) for (i = 0; i < len; i++) { h ^= ((const u8 *)src)[i]; h *= 16777619u; }
+    ((u32 *)dst)[0] = h; return HV_STATUS_SUCCESS;
+}
+i32 hv_lsa_unseal(u32 part, u32 component, u32 expected_pcr, u32 dst) {
+    Partition *p = part_of(part); u32 h;
+    if (!p || !p->secret_len || !dst) return HV_STATUS_INVALID_PARAMETER;
+    if (p->pcr != expected_pcr) return HV_STATUS_ACCESS_DENIED;
+    h = p->pcr ^ component ^ 0xC6A4A793u;
+    *(u32 *)dst = h;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vtl_scan(u32 part, u32 src, u32 len) {
+    Partition *p = part_of(part); u8 *needle = (u8 *)src; u32 i, j, n, hits = 0;
+    if (!p || !src || !len || len > 64u) return 0;
+    for (i = 0; i < GPA_PAGES; i++) if (p->slat[i] && (vtl_perm(p, VTL0, i) & VTL_ACCESS_R)) {
+        n = PAGE; for (j = 0; j + len <= n; j++) { u32 k; for (k = 0; k < len; k++) if (PHYS[((p->slat[i] >> 3) << PAGE_SHIFT) + j + k] != needle[k]) break; if (k == len) hits++; }
+    }
+    return hits;
+}
+u32 hv_measure_boot(u32 part, u32 component, u32 hash) { Partition *p = part_of(part); if (!p) return 0; p->pcr = (p->pcr << 5) ^ hash ^ component; return p->pcr; }
+u32 hv_pcr_field(u32 part) { Partition *p = part_of(part); return p ? p->pcr : 0; }
+i32 hv_hyperguard_write(u32 part, u32 reg, u32 value) { Partition *p = part_of(part); if (!p) return HV_STATUS_INVALID_PARAMETER; if ((reg == 0u || reg == 4u) && value == 0u) { p->hyperguard_denies++; return HV_STATUS_ACCESS_DENIED; } return HV_STATUS_SUCCESS; }
+
+u32 hv_partition_state_hash(u32 part) {
+    Partition *p = part_of(part); u32 i, h = 2166136261u;
+    if (!p) return 0;
+    h ^= p->state; h *= 16777619u; h ^= p->mapped_pages; h *= 16777619u; h ^= p->runs; h *= 16777619u;
+    h ^= p->timer_fires; h *= 16777619u; h ^= p->channel; h *= 16777619u;
+    for (i = 0; i < p->vp_count; i++) { Vp *v = vp_of(p->vps[i]); if (v) { h ^= v->instr; h *= 16777619u; h ^= v->msg_count; h *= 16777619u; h ^= v->regs[0]; h *= 16777619u; } }
+    return h;
+}
+u32 hv_checkpoint_save(u32 part, u32 dst, u32 cap) {
+    Partition *p = part_of(part); u32 out[16], i, slot;
+    if (!p || !dst || cap < sizeof(out)) return 0;
+    out[0] = 0x31435648u; out[1] = 1u; out[2] = part; out[3] = p->state; out[4] = p->vp_count;
+    out[5] = p->mapped_pages; out[6] = p->timer_fires; out[7] = p->runs; out[8] = p->channel;
+    out[9] = hv_partition_state_hash(part); out[10] = p->weight; out[11] = p->priv_lo; out[12] = p->priv_hi;
+    for (i = 0; i < 3u; i++) out[13u + i] = (i < p->vp_count && vp_of(p->vps[i])) ? vp_of(p->vps[i])->instr : 0u;
+    slot = (u32)(p - PARTS);
+    CHECKPOINT_VALID[slot] = 0u;
+    if (p->has_guest && hv_mem_read(p, FB_GPA, (u32)CHECKPOINT_FB[slot], FB_BYTES, 0u) == FB_BYTES) {
+        CHECKPOINT_HASH[slot] = out[9];
+        CHECKPOINT_HEARTBEAT[slot] = guest_field(part, GF_HEARTBEAT);
+        CHECKPOINT_STAGE[slot] = guest_field(part, GF_STAGE);
+        CHECKPOINT_VALID[slot] = 1u;
+    }
+    memcpy((u8 *)dst, out, sizeof(out)); return sizeof(out);
+}
+u32 hv_checkpoint_field(u32 part, u32 field) {
+    Partition *p = part_of(part); u32 slot;
+    if (!p || field > 3u) return 0;
+    slot = (u32)(p - PARTS);
+    switch (field) {
+    case 0: return CHECKPOINT_VALID[slot];
+    case 1: return CHECKPOINT_VALID[slot] ? FB_BYTES : 0u;
+    case 2: return CHECKPOINT_VALID[slot] ? CHECKPOINT_HEARTBEAT[slot] : 0u;
+    case 3: return CHECKPOINT_VALID[slot] ? CHECKPOINT_HASH[slot] : 0u;
+    default: return 0;
+    }
+}
+i32 hv_checkpoint_restore(u32 part, u32 src, u32 len) {
+    Partition *p = part_of(part); u32 in[16], i, slot;
+    if (!p || !src || len < sizeof(in)) return HV_STATUS_INVALID_PARAMETER;
+    memcpy(in, (const u8 *)src, sizeof(in));
+    if (in[0] != 0x31435648u || in[1] != 1u) return HV_STATUS_INVALID_PARAMETER;
+    p->state = in[3]; p->timer_fires = in[6]; p->runs = in[7]; p->weight = in[10]; p->sched_left = 0;
+    for (i = 0; i < p->vp_count && i < 3u; i++) if (vp_of(p->vps[i])) vp_of(p->vps[i])->instr = in[13u + i];
+    slot = (u32)(p - PARTS);
+    if (CHECKPOINT_VALID[slot] && CHECKPOINT_HASH[slot] == in[9]) {
+        (void)hv_mem_write(p, FB_GPA, (u32)CHECKPOINT_FB[slot], FB_BYTES, 0u);
+        guest_checkpoint_restore(part, CHECKPOINT_STAGE[slot], CHECKPOINT_HEARTBEAT[slot]);
+    }
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_migrate_precopy(u32 src, u32 dst, u32 budget_pages) {
+    Partition *s = part_of(src), *d = part_of(dst); u32 i, n = 0;
+    if (!s || !d || !budget_pages) return 0;
+    for (i = 0; i < GPA_PAGES && n < budget_pages; i++) if (s->slat[i]) {
+        u32 sp = s->slat[i] >> 3, dp;
+        if (!PAGES[sp].dirty) continue;
+        if (!d->slat[i]) (void)hv_map_gpa(dst, i << PAGE_SHIFT, 1u, s->slat[i] & 7u);
+        dp = d->slat[i] >> 3; memcpy(&PHYS[dp << PAGE_SHIFT], &PHYS[sp << PAGE_SHIFT], PAGE); PAGES[sp].dirty = 0; n++;
+    }
+    return n;
+}
+
+static u32 vmx_field_ok(u32 field) { return field == VMX_FIELD_GUEST_RIP || field == VMX_FIELD_EXIT_REASON || field == VMX_FIELD_EXIT_QUAL || field == VMX_FIELD_EPTP || field == VMX_FIELD_VPID; }
+u32 hv_ept_walk_flags(u32 vp, u32 gpa);
+static u32 vmx_control_allowed1(u32 which) {
+    switch (which) {
+    case VMX_CTRL_PIN: return VMX_CTRL_PIN_ALLOWED1;
+    case VMX_CTRL_PROC: return VMX_CTRL_PROC_ALLOWED1;
+    case VMX_CTRL_EXIT: return VMX_CTRL_EXIT_ALLOWED1;
+    case VMX_CTRL_ENTRY: return VMX_CTRL_ENTRY_ALLOWED1;
+    default: return 0u;
+    }
+}
+static u32 vmx_control_allowed0(u32 which) {
+    (void)which;
+    return 0u;
+}
+u32 hv_vmx_basic(void) { return 0x00000001u; }
+u32 hv_vmx_control_limits(u32 which, u32 dst) {
+    u32 out[2];
+    if (which > VMX_CTRL_ENTRY || !dst) return HV_STATUS_INVALID_PARAMETER;
+    out[0] = vmx_control_allowed0(which); out[1] = vmx_control_allowed1(which);
+    memcpy((u8 *)dst, out, 8u); return HV_STATUS_SUCCESS;
+}
+u32 hv_vmx_control(u32 vp, u32 which) {
+    Vp *v = vp_of(vp);
+    if (!v || which > VMX_CTRL_ENTRY) return 0;
+    return v->vmx_controls[which];
+}
+i32 hv_vmx_set_control(u32 vp, u32 which, u32 value) {
+    Vp *v = vp_of(vp);
+    if (!v || which > VMX_CTRL_ENTRY) return HV_STATUS_INVALID_PARAMETER;
+    if ((value & vmx_control_allowed0(which)) != vmx_control_allowed0(which) ||
+        (value & ~vmx_control_allowed1(which))) return HV_STATUS_INVALID_PARAMETER;
+    v->vmx_controls[which] = value;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vmx_feature_control(void) { return vmx_feature_control_reg; }
+i32 hv_vmx_set_feature_control(u32 value) {
+    if ((vmx_feature_control_reg & 1u) && value != vmx_feature_control_reg) return VMX_FAIL_VALID;
+    vmx_feature_control_reg = value; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmx_on(u32 vp) {
+    Vp *v = vp_of(vp); if (!v) return HV_STATUS_INVALID_PARAMETER;
+    if (!(vmx_feature_control_reg & 1u) || !(vmx_feature_control_reg & 4u)) return HV_STATUS_ACCESS_DENIED;
+    if (v->vmx_on) return VMX_FAIL_VALID; v->vmx_on = 1u; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmx_off(u32 vp) { Vp *v = vp_of(vp); if (!v || !v->vmx_on) return VMX_FAIL_INVALID; v->vmx_on = 0; v->vmcs_state = 0; v->vmcs = 0; return HV_STATUS_SUCCESS; }
+i32 hv_vmclear(u32 vp, u32 vmcs) {
+    Vp *v = vp_of(vp); u32 i;
+    if (!v || !v->vmx_on || !vmcs) return VMX_FAIL_INVALID;
+    v->vmcs = vmcs; v->vmcs_state = 0; v->vmx_error = 0; v->vmx_exit_reason = 0;
+    v->vmx_host_state = 1u; v->vmx_guest_state = 1u;
+    for (i = 0; i < 4u; i++) v->vmx_controls[i] = 0u;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vmptrld(u32 vp, u32 vmcs) { Vp *v = vp_of(vp); if (!v || !v->vmx_on || !vmcs) return VMX_FAIL_INVALID; v->vmcs = vmcs; return HV_STATUS_SUCCESS; }
+u32 hv_vmptrst(u32 vp) { Vp *v = vp_of(vp); return v ? v->vmcs : 0; }
+i32 hv_vmwrite(u32 vp, u32 field, u32 value) {
+    Vp *v = vp_of(vp); u32 i;
+    if (!v || !v->vmx_on || !v->vmcs) return VMX_FAIL_INVALID;
+    if (!vmx_field_ok(field)) { v->vmx_error = VMXERR_BAD_FIELD; return VMX_FAIL_VALID; }
+    if (field == VMX_FIELD_EPTP && ((value & 7u) > 6u || ((value >> 3) & 7u) != 3u)) {
+        v->vmx_error = VMXERR_BAD_FIELD; return VMX_FAIL_VALID;
+    }
+    i = field & 63u; VMX_FIELDS[vp - 1u][i] = value;
+    if (field == VMX_FIELD_EPTP) v->vmx_ept_generation = value;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vmread(u32 vp, u32 field, u32 dst) {
+    Vp *v = vp_of(vp); if (!v || !v->vmx_on || !v->vmcs || !dst) return VMX_FAIL_INVALID;
+    if (!vmx_field_ok(field)) { v->vmx_error = VMXERR_BAD_FIELD; return VMX_FAIL_VALID; }
+    *(u32 *)dst = VMX_FIELDS[vp - 1u][field & 63u]; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmlaunch(u32 vp) {
+    Vp *v = vp_of(vp); if (!v || !v->vmx_on || !v->vmcs) return VMX_FAIL_INVALID;
+    if (v->vmcs_state != 0u) { v->vmx_error = VMXERR_VMLAUNCH_NONCLEAR; return VMX_FAIL_VALID; }
+    {
+        u32 i;
+        for (i = 0; i < 4u; i++) if ((v->vmx_controls[i] & ~vmx_control_allowed1(i)) ||
+                                      (v->vmx_controls[i] & vmx_control_allowed0(i)) != vmx_control_allowed0(i)) {
+            v->vmx_error = VMXERR_ENTRY_INVALID_CONTROL; v->vmx_exit_reason = VMXERR_ENTRY_INVALID_CONTROL;
+            return VMX_FAIL_VALID;
+        }
+        if (!v->vmx_host_state) { v->vmx_error = VMXERR_ENTRY_INVALID_HOST; v->vmx_exit_reason = VMXERR_ENTRY_INVALID_HOST; return VMX_FAIL_VALID; }
+        if (!v->vmx_guest_state) { v->vmx_error = VMXERR_ENTRY_INVALID_CONTROL; v->vmx_exit_reason = VMXERR_ENTRY_INVALID_CONTROL; return VMX_FAIL_VALID; }
+    }
+    v->vmcs_state = 2u; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmresume(u32 vp) {
+    Vp *v = vp_of(vp); if (!v || !v->vmx_on || !v->vmcs) return VMX_FAIL_INVALID;
+    if (v->vmcs_state != 2u) { v->vmx_error = VMXERR_VMRESUME_CLEAR; return VMX_FAIL_VALID; }
+    v->vmx_exit_reason = 0; v->vmx_exit_qual = 0; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmx_set_state(u32 vp, u32 which, u32 valid) {
+    Vp *v = vp_of(vp);
+    if (!v || which > 1u) return HV_STATUS_INVALID_PARAMETER;
+    if (which == 0u) v->vmx_host_state = valid ? 1u : 0u;
+    else v->vmx_guest_state = valid ? 1u : 0u;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vmx_field(u32 vp, u32 f) {
+    Vp *v = vp_of(vp); if (!v) return 0;
+    switch (f) { case 0: return v->vmx_on; case 1: return v->vmcs_state; case 2: return v->vmx_exit_reason; case 3: return v->vmx_exit_qual; case 4: return v->vmx_error; case 5: return VMX_FIELDS[vp - 1u][VMX_FIELD_EPTP & 63u]; case 6: return VMX_FIELDS[vp - 1u][VMX_FIELD_VPID & 63u]; case 7: return v->vmx_interrupt_info; case 8: return v->vmx_interrupt_window; case 9: return v->vmx_preempt_timer; case 10: return v->vmx_nested; case 11: return v->vmx_interrupt_delivered; case 12: return v->vmx_nested_exit; case 13: return v->vmx_nested_reflect; case 14: return v->vmx_nested_exit_qual; case 15: return v->vmx_nested_merged; default: return 0; }
+}
+u32 hv_vmx_guest_action(u32 vp, u32 action, u32 arg) {
+    Vp *v = vp_of(vp); u32 reason = action, qual = 0, page, access, flags;
+    if (!v || !v->vmx_on || v->vmcs_state != 2u) return HV_STATUS_BAD_PART_STATE;
+    if ((action == VMX_EXIT_RDMSR || action == VMX_EXIT_WRMSR)) {
+        u32 i, want = action == VMX_EXIT_RDMSR ? 1u : 2u; reason = 0;
+        for (i = 0; i < 8u; i++) if (v->vmx_msr_bitmap_msrs[i] == arg && (v->vmx_msr_bitmap_flags[i] & want)) { reason = action; break; }
+    } else if (action == 30u) {
+        u32 i;
+        reason = 0;
+        for (i = 0; i < 8u; i++) if (v->vmx_io_bitmap_ports[i] == (arg & 0xFFFFu) && v->vmx_io_bitmap_flags[i]) { reason = 30u; break; }
+    } else if (action == VMX_EXIT_EPT_MISCONFIG) reason = VMX_EXIT_EPT_MISCONFIG;
+    else if (action == VMX_EXIT_EPT_VIOLATION) {
+        page = (arg & ~7u) >> PAGE_SHIFT; access = arg & 7u;
+        if (page >= GPA_PAGES) { reason = VMX_EXIT_EPT_VIOLATION; qual = access; }
+        else {
+            if (!v->vmx_tlb_valid || v->vmx_tlb_gpa != page) { v->vmx_tlb_gpa = page; v->vmx_tlb_flags = hv_ept_walk_flags(vp, page << PAGE_SHIFT); v->vmx_tlb_vpid = v->vmx_vpid; v->vmx_tlb_valid = 1u; }
+            flags = v->vmx_tlb_flags;
+            if ((flags & 1u) && !(flags & 2u)) { reason = VMX_EXIT_EPT_MISCONFIG; qual = flags; }
+            else if ((flags & access) != access) { reason = VMX_EXIT_EPT_VIOLATION; qual = access | ((flags & 7u) << 3); }
+            else { reason = 0; VMX_EPT_AD[vp - 1u][page] |= 1u; if (access & VTL_ACCESS_W) VMX_EPT_AD[vp - 1u][page] |= 2u; }
+        }
+    }
+    v->vmx_exit_reason = reason; v->vmx_exit_qual = qual;
+    VMX_FIELDS[vp - 1u][VMX_FIELD_EXIT_REASON & 63u] = reason;
+    VMX_FIELDS[vp - 1u][VMX_FIELD_EXIT_QUAL & 63u] = qual;
+    return reason;
+}
+i32 hv_ept_map(u32 vp, u32 gpa, u32 pfn, u32 flags) {
+    Vp *v = vp_of(vp); if (!v || gpa >= GPA_LIMIT || (gpa & (PAGE - 1u)) || !pfn || !flags || (flags & ~7u)) return HV_STATUS_INVALID_PARAMETER;
+    {
+        u32 x = gpa >> PAGE_SHIFT;
+        u32 l4 = 0u, l3 = (gpa >> 30) & 511u, l2 = (gpa >> 21) & 511u, l1 = (gpa >> 12) & 511u;
+        VMX_EPT_TABLE[vp - 1u][0][l4] = 1u;
+        VMX_EPT_TABLE[vp - 1u][1][l3] = 1u;
+        VMX_EPT_TABLE[vp - 1u][2][l2] = 1u;
+        /* Keep the synthetic present bit out of the PFN: unlike a real EPT
+           entry this model also exposes a compact present marker, so use a
+           four-bit low field before shifting the host PFN. */
+        VMX_EPT_TABLE[vp - 1u][3][l1] = (pfn << 4) | (flags & 7u) | 8u;
+        VMX_EPT[vp - 1u][x] = (u8)flags; VMX_EPT_AD[vp - 1u][x] = 0;
+    }
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_ept_walk_flags(u32 vp, u32 gpa) {
+    Vp *v = vp_of(vp); u32 l4, l3, l2, l1, leaf;
+    if (!v || gpa >= GPA_LIMIT || (gpa & (PAGE - 1u))) return 0;
+    l4 = 0u; l3 = (gpa >> 30) & 511u; l2 = (gpa >> 21) & 511u; l1 = (gpa >> 12) & 511u;
+    if (!VMX_EPT_TABLE[vp - 1u][0][l4] || !VMX_EPT_TABLE[vp - 1u][1][l3] || !VMX_EPT_TABLE[vp - 1u][2][l2]) return 0;
+    leaf = VMX_EPT_TABLE[vp - 1u][3][l1];
+    return (leaf & 8u) ? (leaf & 7u) : 0u;
+}
+u32 hv_ept_field(u32 vp, u32 gpa, u32 field) {
+    Vp *v = vp_of(vp); u32 page;
+    if (!v || gpa >= GPA_LIMIT || (gpa & (PAGE - 1u)) || field > 2u) return 0;
+    page = gpa >> PAGE_SHIFT;
+    if (field == 0u) return VMX_EPT[vp - 1u][page] & 7u;
+    return (VMX_EPT_AD[vp - 1u][page] >> (field - 1u)) & 1u;
+}
+i32 hv_invept(u32 vp, u32 global) { Vp *v = vp_of(vp); (void)global; if (!v) return HV_STATUS_INVALID_PARAMETER; v->vmx_tlb_valid = 0; v->vmx_ept_generation++; return HV_STATUS_SUCCESS; }
+i32 hv_vmx_set_vpid(u32 vp, u32 vpid) {
+    Vp *v = vp_of(vp);
+    if (!v || !vpid || vpid > 0xFFFFu) return HV_STATUS_INVALID_PARAMETER;
+    v->vmx_vpid = vpid; VMX_FIELDS[vp - 1u][VMX_FIELD_VPID & 63u] = vpid;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_invvpid(u32 vp, u32 global, u32 vpid) {
+    Vp *v = vp_of(vp);
+    if (!v || (!global && (!vpid || vpid != v->vmx_vpid))) return HV_STATUS_INVALID_PARAMETER;
+    if (global || v->vmx_tlb_vpid == vpid) v->vmx_tlb_valid = 0;
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vmx_inject_interrupt(u32 vp, u32 vector) { Vp *v = vp_of(vp); if (!v || vector > 255u) return HV_STATUS_INVALID_PARAMETER; v->vmx_interrupt_info = vector; if (v->vmx_guest_if) v->ipi_pending = 1u; else v->vmx_interrupt_window = 1u; return HV_STATUS_SUCCESS; }
+i32 hv_vmx_set_guest_if(u32 vp, u32 enabled) { Vp *v = vp_of(vp); if (!v) return HV_STATUS_INVALID_PARAMETER; v->vmx_guest_if = enabled ? 1u : 0u; if (v->vmx_guest_if && v->vmx_interrupt_info) { v->ipi_pending = 1u; v->vmx_interrupt_window = 0; } return HV_STATUS_SUCCESS; }
+i32 hv_vmx_set_msr_bitmap(u32 vp, u32 msr, u32 read_exit, u32 write_exit) {
+    Vp *v = vp_of(vp); u32 i;
+    if (!v || msr > 0xFFFFFFFFu) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < 8u; i++) if (v->vmx_msr_bitmap_msrs[i] == msr || !v->vmx_msr_bitmap_flags[i]) { v->vmx_msr_bitmap_msrs[i] = msr; v->vmx_msr_bitmap_flags[i] = (read_exit ? 1u : 0u) | (write_exit ? 2u : 0u); return HV_STATUS_SUCCESS; }
+    return HV_STATUS_INSUFFICIENT_MEM;
+}
+i32 hv_vmx_set_io_bitmap(u32 vp, u32 port, u32 read_exit, u32 write_exit) {
+    Vp *v = vp_of(vp); u32 i;
+    if (!v || port > 0xFFFFu) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < 8u; i++) if (v->vmx_io_bitmap_ports[i] == port || !v->vmx_io_bitmap_flags[i]) {
+        v->vmx_io_bitmap_ports[i] = port;
+        v->vmx_io_bitmap_flags[i] = (read_exit ? 1u : 0u) | (write_exit ? 2u : 0u);
+        return HV_STATUS_SUCCESS;
+    }
+    return HV_STATUS_INSUFFICIENT_MEM;
+}
+i32 hv_vmx_set_preemption_timer(u32 vp, u32 ticks) { Vp *v = vp_of(vp); if (!v) return HV_STATUS_INVALID_PARAMETER; v->vmx_preempt_timer = ticks; return HV_STATUS_SUCCESS; }
+i32 hv_vmx_nested_enter(u32 vp) {
+    Vp *v = vp_of(vp); u32 i;
+    if (!v || !v->vmx_on || v->vmx_nested) return VMX_FAIL_VALID;
+    v->vmx_nested = 1u; v->vmx_nested_exit = 0u; v->vmx_nested_exit_qual = 0u; v->vmx_nested_merged = 0u;
+    for (i = 0; i < VMX_NESTED_FIELDS; i++) { v->vmx_vmcs12[i] = 0u; v->vmx_vmcs02[i] = 0u; }
+    return HV_STATUS_SUCCESS;
+}
+i32 hv_vmx_nested_set_vmcs12(u32 vp, u32 field, u32 value) {
+    Vp *v = vp_of(vp);
+    if (!v || !v->vmx_nested || field >= VMX_NESTED_FIELDS) return HV_STATUS_INVALID_PARAMETER;
+    v->vmx_vmcs12[field] = value; v->vmx_nested_merged = 0u; return HV_STATUS_SUCCESS;
+}
+i32 hv_vmx_nested_merge(u32 vp) {
+    Vp *v = vp_of(vp); u32 i;
+    if (!v || !v->vmx_nested || !v->vmx_on) return HV_STATUS_BAD_PART_STATE;
+    for (i = 0; i < 4u; i++) if (v->vmx_vmcs12[i] & ~vmx_control_allowed1(i)) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < 4u; i++) v->vmx_vmcs02[i] = v->vmx_vmcs12[i] & vmx_control_allowed1(i);
+    v->vmx_vmcs02[VMX_NESTED_GUEST_RIP] = v->vmx_vmcs12[VMX_NESTED_GUEST_RIP];
+    v->vmx_vmcs02[VMX_NESTED_EXIT_REASON] = 0u; v->vmx_vmcs02[VMX_NESTED_EXIT_QUAL] = 0u;
+    v->vmx_vmcs02[VMX_NESTED_LAUNCHED] = 1u; v->vmx_nested_merged = 1u;
+    return HV_STATUS_SUCCESS;
+}
+u32 hv_vmx_nested_field(u32 vp, u32 bank, u32 field) {
+    Vp *v = vp_of(vp);
+    if (!v || bank > 1u || field >= VMX_NESTED_FIELDS) return 0u;
+    return bank ? v->vmx_vmcs02[field] : v->vmx_vmcs12[field];
+}
+i32 hv_vmx_nested_set_reflect(u32 vp, u32 reason, u32 reflect) {
+    Vp *v = vp_of(vp);
+    if (!v || !v->vmx_nested || reason > 63u) return HV_STATUS_INVALID_PARAMETER;
+    v->vmx_nested_reason = reason; v->vmx_nested_reflect = reflect ? 1u : 0u; return HV_STATUS_SUCCESS;
+}
+u32 hv_vmx_nested_action(u32 vp, u32 action, u32 arg) {
+    Vp *v = vp_of(vp); u32 r;
+    if (!v || !v->vmx_nested || v->vmcs_state != 2u) return HV_STATUS_BAD_PART_STATE;
+    if (!v->vmx_nested_merged && hv_vmx_nested_merge(vp) != HV_STATUS_SUCCESS) return HV_STATUS_INVALID_PARAMETER;
+    r = hv_vmx_guest_action(vp, action, arg);
+    v->vmx_vmcs02[VMX_NESTED_EXIT_REASON] = v->vmx_exit_reason;
+    v->vmx_vmcs02[VMX_NESTED_EXIT_QUAL] = v->vmx_exit_qual;
+    if (v->vmx_nested_reflect && action == v->vmx_nested_reason) {
+        v->vmx_nested_exit = r; v->vmx_nested_exit_qual = v->vmx_exit_qual;
+        v->vmx_vmcs12[VMX_NESTED_EXIT_REASON] = v->vmx_exit_reason;
+        v->vmx_vmcs12[VMX_NESTED_EXIT_QUAL] = v->vmx_exit_qual;
+        v->vmx_nested_reflect = 0u;
+    } else { v->vmx_nested_exit = 0u; v->vmx_nested_exit_qual = 0u; }
+    return r;
+}
+i32 hv_vmx_nested_exit(u32 vp) { Vp *v = vp_of(vp); if (!v || !v->vmx_nested) return VMX_FAIL_INVALID; v->vmx_nested = 0; v->vmx_nested_merged = 0; return HV_STATUS_SUCCESS; }
+
+/* ------------------------------------------------------ guest register ISA */
+/*
+   This is intentionally a small, fixed-width instruction set rather than a
+   second C guest.  The code bytes live in the partition's GPA space.  A
+   fetch, load, and store all resolve a page through the partition SLAT and,
+   when the VP is in VMX/nested mode, through its EPT walk as well.  A failed
+   access records a VM exit and leaves RIP at the faulting instruction so the
+   VTL or L1 handler can decide what to do before resuming.
+*/
+static u32 isa_ept_pfn(Vp *v, u32 gpa) {
+    u32 l1, leaf;
+    if (!v || gpa >= GPA_LIMIT) return 0;
+    l1 = (gpa >> PAGE_SHIFT) & 511u;
+    leaf = VMX_EPT_TABLE[(u32)(v - VPS)][3][l1];
+    return (leaf & 8u) ? ((leaf & ~0xFu) >> 4) : 0u;
+}
+
+static u32 isa_fail(Vp *v, Partition *p, u32 gpa, u32 access, u32 flags, u32 reason) {
+    if (!v || !p) return 0;
+    v->isa_faults++;
+    v->isa_last_exit = reason ? reason : ISA_EXIT_SLAT;
+    v->isa_last_qual = access | ((flags & 7u) << 3);
+    v->isa_status = (reason == VMX_EXIT_EPT_MISCONFIG) ? HV_STATUS_BAD_PART_STATE : HV_STATUS_SLAT_FAULT;
+    p->faults++; g_slat_faults++;
+    if (v->isa_vtl == VTL0 && p->vtl_enabled) {
+        p->vtl_intercepts++;
+        p->vtl_intercept_gpa = gpa;
+        p->vtl_intercept_access = access;
+        p->current_vtl = VTL1;
+    }
+    return 0;
+}
+
+static u32 isa_translate(Vp *v, Partition *p, u32 gpa, u32 access, u32 *pfn) {
+    u32 flags = 0, page, allowed, ept_flags, reason;
+    if (!v || !p || gpa >= GPA_LIMIT || !slat_pfn(p, gpa, &flags))
+        return isa_fail(v, p, gpa, access, flags, VMX_EXIT_EPT_VIOLATION);
+    page = gpa >> PAGE_SHIFT;
+
+    if ((access & VTL_ACCESS_X) && p->vtl_enabled &&
+        !p->hvci_signed[page] && !(p->vsm_code_ready && p->vsm_code_gpa == (page << PAGE_SHIFT))) {
+        p->hvci_denies++;
+        return isa_fail(v, p, gpa, access, flags, VMX_EXIT_EPT_VIOLATION);
+    }
+
+    /* Nested L2 accesses use the effective VMCS02 EPT and retain the normal
+       stale-TLB behaviour until INVEPT/INVVPID is called. */
+    if (v->vmx_on && v->vmcs_state == 2u) {
+        reason = v->vmx_nested ? hv_vmx_nested_action((u32)(v - VPS) + 1u,
+                    VMX_EXIT_EPT_VIOLATION, (gpa & ~(PAGE - 1u)) | access)
+                              : hv_vmx_guest_action((u32)(v - VPS) + 1u,
+                    VMX_EXIT_EPT_VIOLATION, (gpa & ~(PAGE - 1u)) | access);
+        if (reason) return isa_fail(v, p, gpa, access, v->vmx_exit_qual >> 3, reason);
+        ept_flags = v->vmx_tlb_flags & 7u;
+        if (!(ept_flags & access)) return isa_fail(v, p, gpa, access, ept_flags, VMX_EXIT_EPT_VIOLATION);
+        *pfn = isa_ept_pfn(v, gpa);
+        if (!*pfn || *pfn >= HOST_PAGES) return isa_fail(v, p, gpa, access, ept_flags, VMX_EXIT_EPT_VIOLATION);
+        return 1u;
+    }
+
+    /* VTL0 sees the secure kernel's protection overlay.  VTL1 executes with
+       the underlying SLAT permissions, but code still has to be admitted by
+       HVCI/VSM before an execute fetch is allowed. */
+    if (v->isa_vtl == VTL0 && p->vtl_enabled) {
+        allowed = vtl_perm(p, VTL0, page);
+        if ((allowed & access) != access)
+            return isa_fail(v, p, gpa, access, allowed, VMX_EXIT_EPT_VIOLATION);
+    }
+    if (!(flags & access)) return isa_fail(v, p, gpa, access, flags, VMX_EXIT_EPT_VIOLATION);
+    *pfn = flags ? (slat_pfn(p, gpa, &flags)) : 0u;
+    return *pfn != 0u;
+}
+
+static u32 isa_read32(Vp *v, Partition *p, u32 gpa, u32 access, u32 *out) {
+    u32 pfn, off;
+    if (!isa_translate(v, p, gpa, access, &pfn) || gpa + 4u > GPA_LIMIT) return 0;
+    off = gpa & (PAGE - 1u);
+    if (off + 4u > PAGE) {
+        u8 b[4]; u32 i;
+        for (i = 0; i < 4u; i++) if (!isa_translate(v, p, gpa + i, access, &pfn)) return 0;
+        for (i = 0; i < 4u; i++) b[i] = PHYS[(pfn << PAGE_SHIFT) + ((gpa + i) & (PAGE - 1u))];
+        *out = (u32)b[0] | ((u32)b[1] << 8) | ((u32)b[2] << 16) | ((u32)b[3] << 24);
+        return 1u;
+    }
+    *out = *(u32 *)&PHYS[(pfn << PAGE_SHIFT) + off];
+    return 1u;
+}
+
+static u32 isa_write32(Vp *v, Partition *p, u32 gpa, u32 value) {
+    u32 pfn, off;
+    if (!isa_translate(v, p, gpa, VTL_ACCESS_W, &pfn) || gpa + 4u > GPA_LIMIT) return 0;
+    off = gpa & (PAGE - 1u);
+    if (off + 4u > PAGE) {
+        u32 i;
+        for (i = 0; i < 4u; i++) if (!isa_translate(v, p, gpa + i, VTL_ACCESS_W, &pfn)) return 0;
+        for (i = 0; i < 4u; i++) PHYS[(pfn << PAGE_SHIFT) + ((gpa + i) & (PAGE - 1u))] = (u8)(value >> (i * 8u));
+    } else *(u32 *)&PHYS[(pfn << PAGE_SHIFT) + off] = value;
+    PAGES[pfn].dirty = 1u;
+    return 1u;
+}
+
+static u32 isa_fetch(Vp *v, Partition *p, u32 gpa, u8 *ins) {
+    u32 pfn, i, off;
+    if (gpa < v->isa_entry || gpa + ISA_INSN_BYTES > v->isa_code_end || (gpa & 3u)) {
+        isa_fail(v, p, gpa, VTL_ACCESS_X, 0u, ISA_EXIT_ILLEGAL); return 0;
+    }
+    for (i = 0; i < ISA_INSN_BYTES; i++) {
+        if (!isa_translate(v, p, gpa + i, VTL_ACCESS_X, &pfn)) return 0;
+        off = (gpa + i) & (PAGE - 1u);
+        ins[i] = PHYS[(pfn << PAGE_SHIFT) + off];
+    }
+    return 1u;
+}
+
+static void isa_exit(Vp *v, u32 reason, u32 qual) {
+    v->isa_last_exit = reason; v->isa_last_qual = qual;
+    if (v->vmx_on) {
+        v->vmx_exit_reason = reason;
+        v->vmx_exit_qual = qual;
+        VMX_FIELDS[(u32)(v - VPS)][VMX_FIELD_EXIT_REASON & 63u] = reason;
+        VMX_FIELDS[(u32)(v - VPS)][VMX_FIELD_EXIT_QUAL & 63u] = qual;
+    }
+}
+
+i32 hv_isa_reset(u32 vp, u32 entry_gpa, u32 code_pages, u32 vtl) {
+    Vp *v = vp_of(vp); Partition *p; u32 i, pfn, code_end;
+    if (!v || vtl > VTL1 || !code_pages || code_pages > ISA_MAX_CODE_PAGES ||
+        (entry_gpa & (ISA_INSN_BYTES - 1u))) return HV_STATUS_INVALID_PARAMETER;
+    p = &PARTS[v->part];
+    if (vtl == VTL1 && !p->vtl_enabled) return HV_STATUS_ACCESS_DENIED;
+    code_end = entry_gpa + code_pages * PAGE;
+    if (code_end < entry_gpa || code_end > GPA_LIMIT) return HV_STATUS_INVALID_PARAMETER;
+    for (i = 0; i < code_pages; i++) {
+        if (!slat_pfn(p, entry_gpa + i * PAGE, 0)) return HV_STATUS_SLAT_FAULT;
+        pfn = slat_pfn(p, entry_gpa + i * PAGE, 0);
+        if (!pfn || !(p->slat[(entry_gpa >> PAGE_SHIFT) + i] & 4u)) return HV_STATUS_ACCESS_DENIED;
+    }
+    memset(v->isa_regs, 0, sizeof(v->isa_regs));
+    v->isa_active = 1u; v->isa_vtl = vtl; v->isa_secure = (vtl == VTL1);
+    v->isa_entry = entry_gpa; v->isa_rip = entry_gpa; v->isa_code_end = code_end;
+    v->isa_steps = v->isa_faults = v->isa_last_exit = v->isa_last_qual = 0u;
+    v->isa_halted = 0u; v->isa_status = HV_STATUS_SUCCESS;
+    v->vmx_exit_reason = 0u; v->vmx_exit_qual = 0u;
+    return HV_STATUS_SUCCESS;
+}
+
+i32 hv_isa_stop(u32 vp) {
+    Vp *v = vp_of(vp); if (!v) return HV_STATUS_INVALID_PARAMETER;
+    v->isa_active = 0u; v->isa_halted = 1u; return HV_STATUS_SUCCESS;
+}
+
+u32 hv_isa_step(u32 vp, u32 budget) {
+    Vp *v = vp_of(vp); Partition *p; u32 n = 0, imm, a, target, st, out[4];
+    u8 ins[ISA_INSN_BYTES]; u32 rd, ra, rb, op; i32 simm;
+    if (!v || !v->isa_active || v->isa_halted) return 0u;
+    p = &PARTS[v->part]; if (!budget) return 0u; if (budget > 1024u) budget = 1024u;
+    while (n < budget && !v->isa_halted) {
+        if (v->isa_steps >= ISA_MAX_STEPS) { v->isa_status = HV_STATUS_BAD_PART_STATE; v->isa_halted = 1u; isa_exit(v, ISA_EXIT_ILLEGAL, 0u); break; }
+        if (!isa_fetch(v, p, v->isa_rip, ins)) { v->isa_halted = 1u; break; }
+        op = ins[0]; rd = ins[1] & 15u; ra = ins[2] & 15u; rb = ins[3] & 15u;
+        imm = (u32)ins[4] | ((u32)ins[5] << 8) | ((u32)ins[6] << 16) | ((u32)ins[7] << 24);
+        simm = (i32)(int16_t)(imm & 0xFFFFu);
+        v->isa_rip += ISA_INSN_BYTES; v->isa_steps++; n++;
+        switch (op) {
+        case ISA_OP_HALT: v->isa_halted = 1u; v->isa_status = HV_STATUS_SUCCESS; isa_exit(v, VMX_EXIT_HLT, 0u); break;
+        case ISA_OP_MOVI: v->isa_regs[rd] = imm; break;
+        case ISA_OP_ADD: v->isa_regs[rd] = v->isa_regs[ra] + v->isa_regs[rb]; break;
+        case ISA_OP_SUB: v->isa_regs[rd] = v->isa_regs[ra] - v->isa_regs[rb]; break;
+        case ISA_OP_XOR: v->isa_regs[rd] = v->isa_regs[ra] ^ v->isa_regs[rb]; break;
+        case ISA_OP_CMP: v->isa_regs[rd] = (v->isa_regs[ra] == v->isa_regs[rb]) ? 1u : 0u; break;
+        case ISA_OP_LOAD:
+            a = v->isa_regs[ra] + (u32)simm;
+            if (!isa_read32(v, p, a, VTL_ACCESS_R, &v->isa_regs[rd])) v->isa_halted = 1u;
+            break;
+        case ISA_OP_STORE:
+            a = v->isa_regs[ra] + (u32)simm;
+            if (!isa_write32(v, p, a, v->isa_regs[rb])) v->isa_halted = 1u;
+            break;
+        case ISA_OP_JMP:
+            target = (u32)((i32)v->isa_rip + simm * (i32)ISA_INSN_BYTES);
+            if (target < v->isa_entry || target + ISA_INSN_BYTES > v->isa_code_end || (target & 3u)) { isa_fail(v, p, target, VTL_ACCESS_X, 0u, ISA_EXIT_ILLEGAL); v->isa_halted = 1u; }
+            else v->isa_rip = target;
+            break;
+        case ISA_OP_JNZ:
+            if (v->isa_regs[ra]) { target = (u32)((i32)v->isa_rip + simm * (i32)ISA_INSN_BYTES); if (target < v->isa_entry || target + ISA_INSN_BYTES > v->isa_code_end || (target & 3u)) { isa_fail(v, p, target, VTL_ACCESS_X, 0u, ISA_EXIT_ILLEGAL); v->isa_halted = 1u; } else v->isa_rip = target; }
+            break;
+        case ISA_OP_VMCALL: isa_exit(v, VMX_EXIT_VMCALL, imm); st = hv_vmcall(vp); v->isa_status = st; break;
+        case ISA_OP_CPUID: cpuid_leaf(v->isa_regs[ra], v->isa_regs[rb], out, p->priv_lo, p->priv_hi); v->isa_regs[0] = out[0]; v->isa_regs[1] = out[1]; v->isa_regs[2] = out[2]; v->isa_regs[3] = out[3]; isa_exit(v, VMX_EXIT_CPUID, v->isa_regs[ra]); break;
+        case ISA_OP_RDMSR: isa_exit(v, VMX_EXIT_RDMSR, v->isa_regs[ra]); st = msr_read(v, v->isa_regs[ra], &v->isa_regs[rd], &v->isa_regs[(rd + 1u) & 15u]); v->isa_status = st; break;
+        case ISA_OP_WRMSR: isa_exit(v, VMX_EXIT_WRMSR, v->isa_regs[ra]); st = msr_write(v, v->isa_regs[ra], v->isa_regs[rd], v->isa_regs[(rd + 1u) & 15u]); v->isa_status = st; break;
+        case ISA_OP_VTL_CALL: st = hv_vtl_call(vp, v->isa_regs[ra], v->isa_regs[rb]); v->isa_status = st; if (!st) v->isa_vtl = VTL1; break;
+        case ISA_OP_VTL_RETURN: st = hv_vtl_return(vp); v->isa_status = st; if (!st) v->isa_vtl = VTL0; break;
+        default: v->isa_status = HV_STATUS_NOT_IMPLEMENTED; isa_fail(v, p, v->isa_rip - ISA_INSN_BYTES, 0u, 0u, ISA_EXIT_ILLEGAL); v->isa_halted = 1u; break;
+        }
+        if (v->isa_halted && v->isa_status == HV_STATUS_SUCCESS) break;
+    }
+    return n;
+}
+
+u32 hv_isa_field(u32 vp, u32 field) {
+    Vp *v = vp_of(vp); if (!v) return 0u;
+    switch (field) {
+    case 0: return v->isa_active; case 1: return v->isa_vtl; case 2: return v->isa_rip;
+    case 3: return v->isa_last_exit; case 4: return v->isa_last_qual; case 5: return v->isa_halted;
+    case 6: return v->isa_steps; case 7: return v->isa_faults; case 8: return v->isa_status;
+    case 9: return v->isa_entry; case 10: return v->isa_code_end; case 11: return v->isa_secure;
+    default: return 0u;
+    }
+}
+u32 hv_isa_reg(u32 vp, u32 reg) { Vp *v = vp_of(vp); return (v && reg < ISA_REGS) ? v->isa_regs[reg] : 0u; }
+i32 hv_isa_set_reg(u32 vp, u32 reg, u32 value) { Vp *v = vp_of(vp); if (!v || reg >= ISA_REGS) return HV_STATUS_INVALID_PARAMETER; v->isa_regs[reg] = value; return HV_STATUS_SUCCESS; }
+i32 hv_isa_load(u32 part, u32 gpa, u32 src, u32 len) {
+    Partition *p = part_of(part);
+    if (!p || !src || !len || gpa + len < gpa || gpa + len > GPA_LIMIT) return HV_STATUS_INVALID_PARAMETER;
+    return hv_mem_write(p, gpa, src, len, 0u) == len ? HV_STATUS_SUCCESS : HV_STATUS_SLAT_FAULT;
+}
 
 /* -------------------------------------------------------------- scheduling */
 u32 hv_schedule(u32 elapsed_ms);
@@ -1764,6 +3087,25 @@ u32 hv_schedule(u32 elapsed_ms) {
             if (p->timer_oneshot) { p->timer_armed = 0; break; }
         }
     }
+    for (i = 0; i < MAX_VPS; i++) {
+        Vp *v = &VPS[i]; u32 n;
+        if (!v->used || v->state != VS_RUNNING || PARTS[v->part].state != PS_RUNNING) continue;
+        for (n = 0; n < 4u; n++) {
+            SynthTimer *t = &v->stimer[n];
+            if (!t->armed || !t->period) continue;
+            t->acc += elapsed_ms;
+            if (t->acc >= t->period) {
+                u32 fires = t->acc / t->period; t->acc %= t->period;
+                if (t->oneshot) fires = 1u;
+                t->fires += fires; t->last = REF_TIME; t->pending++;
+                if (t->direct) {
+                    v->ipi_vector = v->sint_vec[t->sint]; v->ipi_pending = 1u;
+                } else if (v->sint_masked[t->sint]) t->masked++;
+                else { v->sint_count[t->sint]++; v->sint_pending[t->sint] = 1u; }
+                if (t->oneshot) t->armed = 0;
+            }
+        }
+    }
     budget = elapsed_ms * INSTR_PER_MS;
     if (!budget) budget = 1u;
     while (budget > 0) {
@@ -1779,6 +3121,15 @@ u32 hv_schedule(u32 elapsed_ms) {
         v->run_ns += (u64)ran * (u64)NS_PER_INSTR;
         v->run_us_frac += ran * (NS_PER_INSTR / 1000u);
         while (v->run_us_frac >= 1000u) { v->run_us_frac -= 1000u; v->run_ms++; }
+        if (v->vmx_on && v->vmcs_state == 2u && v->vmx_preempt_timer) {
+            if (v->vmx_preempt_timer <= ran) {
+                v->vmx_preempt_timer = 0;
+                v->vmx_exit_reason = VMX_EXIT_PREEMPT_TIMER;
+                v->vmx_exit_qual = 0;
+                VMX_FIELDS[(u32)(v - VPS)][VMX_FIELD_EXIT_REASON & 63u] = VMX_EXIT_PREEMPT_TIMER;
+                VMX_FIELDS[(u32)(v - VPS)][VMX_FIELD_EXIT_QUAL & 63u] = 0;
+            } else v->vmx_preempt_timer -= ran;
+        }
         PARTS[v->part].runs++;
         runs++;
         if (!v->slice_left) {
@@ -1857,7 +3208,7 @@ u32 hv_guest_field(u32 part, u32 f);
 u32 hv_guest_field(u32 part, u32 f) {
     Partition *p = part_of(part);
     if (!p) return 0;
-    return guest_field((u32)(p - PARTS) + 1u, f);
+    return guest_field(part_id_of(p), f);
 }
 u32 hv_guest_heartbeat(u32 part);
 u32 hv_guest_heartbeat(u32 part) { return hv_guest_field(part, GF_HEARTBEAT); }
