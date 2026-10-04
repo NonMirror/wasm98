@@ -24,6 +24,11 @@
   var MAX_FILES = 4096;
   var MAX_FILE_BYTES = 4 * 1024 * 1024;
   var MAX_TRANSFER_BYTES = 8 * 1024 * 1024;
+  /* Disk images are intentionally separate from guest-file transfers.  A
+     Windows 98 installation commonly occupies hundreds of megabytes, while
+     the browser's typed-array limit makes a 2 GiB ceiling explicit and
+     predictable on hosts that cannot allocate larger contiguous buffers. */
+  var MAX_IMAGE_BYTES = 2 * 1024 * 1024 * 1024;
   var MAX_PATH_CHARS = 259;
   var PERSIST_DB = 'w98-host-exchange';
   var PERSIST_STORE = 'guest-files';
@@ -203,6 +208,33 @@
     if (f && typeof f.arrayBuffer === 'function') return Promise.resolve(f.arrayBuffer()).then(checked);
     if (f && f.data != null) return checked(f.data);
     return Promise.reject(error('UNREADABLE', 'The selected host file cannot be read.', rec.path));
+  }
+
+  function readHostImage(file) {
+    var f = file && file.file ? file.file : file;
+    var declared = Number(f && f.size);
+    if (isFinite(declared) && declared > MAX_IMAGE_BYTES) {
+      return Promise.reject(error('IMAGE_TOO_LARGE', 'The selected disk image exceeds the 2 GiB browser limit.', fileName(f)));
+    }
+    function checked(data) {
+      var bytes;
+      try {
+        bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      } catch (e) {
+        return Promise.reject(error('UNREADABLE', 'The selected disk image could not be represented in memory.', fileName(f)));
+      }
+      if (bytes.length > MAX_IMAGE_BYTES) {
+        return Promise.reject(error('IMAGE_TOO_LARGE', 'The selected disk image exceeds the 2 GiB browser limit.', fileName(f)));
+      }
+      return Promise.resolve(bytes);
+    }
+    if (f && typeof f.arrayBuffer === 'function') {
+      return Promise.resolve(f.arrayBuffer()).then(checked, function () {
+        return Promise.reject(error('UNREADABLE', 'The selected disk image could not be read.', fileName(f)));
+      });
+    }
+    if (f && f.data != null) return checked(f.data);
+    return Promise.reject(error('UNREADABLE', 'The selected disk image cannot be read.', fileName(f)));
   }
 
   function Media(prepared, options) {
@@ -527,7 +559,8 @@
 
   API = {
     VERSION: VERSION, version: VERSION, MANIFEST_KIND: MANIFEST_KIND,
-    limits: { maxFiles: MAX_FILES, maxFileBytes: MAX_FILE_BYTES, maxTransferBytes: MAX_TRANSFER_BYTES, maxPathChars: MAX_PATH_CHARS },
+    limits: { maxFiles: MAX_FILES, maxFileBytes: MAX_FILE_BYTES, maxTransferBytes: MAX_TRANSFER_BYTES,
+      maxImageBytes: MAX_IMAGE_BYTES, maxPathChars: MAX_PATH_CHARS },
     Error: BridgeError, errors: { EJECTED: 'EJECTED', WRITE_PROTECTED: 'WRITE_PROTECTED', DISK_FULL: 'DISK_FULL', NOT_FOUND: 'NOT_FOUND' },
     normalizePath: normPath, makeManifest: function (files, options) { return makeManifest(files, options || {}).meta; },
     pickFiles: picker, pick: picker, mount: mount, mountMedia: mount,
@@ -574,6 +607,7 @@
     /* Aliases used by the transfer app and by older integrations. */
     download: function (name, bytes, type) { return downloadBytes(cloneBytes(bytes), name, type); },
     readFile: function (file) { return readHostFile({ file: file }); },
+    readImage: readHostImage,
     exportVirtualFile: exportVirtualFile, exportVirtualFiles: exportVirtualFiles, exportFiles: exportVirtualFiles,
     isFileDrop: isFileDrop, installDropTarget: installDropTarget,
     lastError: null,

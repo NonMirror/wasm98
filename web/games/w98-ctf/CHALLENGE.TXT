@@ -1,0 +1,9 @@
+WASM98 CTF #1 - EASY XOR
+
+Find the flag by reversing the boot program.
+The program reads your input, XOR-decodes an embedded byte array,
+and compares the decoded bytes with your input.
+
+Flag format: cnss{...}
+
+The image is intentionally tiny and self-contained.

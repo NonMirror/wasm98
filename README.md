@@ -13,6 +13,9 @@ Windows 98 in the browser. JS draws the pixels; the operating-system state (proc
 - **A Hyper-V-shaped type-1 hypervisor.** `hypervisor.wasm` (~113 KiB) treats its static BSS as 16 MB of physical memory: partitions and VPs, SLAT/EPT, hypercalls, virtual MSRs and CPUID, SynIC, synthetic timers, VMBus, VTL0/VTL1 with HVCI-signed pages, and nested L2. The guest (`guest.c`) enters only through `hv_vm_entry`, every access walks the SLAT, and its window is fenced by canary pages checked after each exit.
 - **Persistence.** The filesystem and registry serialize to line-oriented `KFS1`/`KREG3` formats written in C and stored in IndexedDB, so files, wallpaper, sound scheme and icon positions survive a reload. System Restore adds named restore points and versioned snapshot import/export.
 - **A complete desktop.** Explorer, MS-DOS Prompt (`DIR`, `MEM`, `TASKLIST`, `KERNEL`, `REG` read the kernel directly), Control Panel, Task Manager, Notepad, Paint, Media Player, the classic games plus the Entertainment Pack, and DOOM, Duke3D, Wolf3D and others in a self-hosted DOSBox.
+- **Windows 98 disk-image VM.** Open **Start → Programs → System Tools → Windows 98 Virtual Machine**, choose one of the built-in ISO images or a local bootable `.img`, `.ima`, `.vhd`, `.vhdx`, `.hdd`, `.raw`, or `.iso`, and run it in the bundled DOSBox-X WebAssembly build. Built-ins are served from `web/games/`; user images are read through the explicit host-file picker and are never uploaded.
+- **Boot-path smoke image.** [`web/games/w98-simple.iso`](web/games/w98-simple.iso) is a tiny El Torito ISO that prints a diagnostic message in DOSBox-X. It verifies the local image picker and CD boot path; it is not a Windows 98 installation image.
+- **Reverse-engineering challenge ISO.** [`web/games/w98-ctf.iso`](web/games/w98-ctf.iso) boots a small BIOS-level CTF challenge. It reads a candidate flag, XOR-decodes an embedded byte array, compares the decoded bytes, and prints a success or failure message. `CHALLENGE.TXT` inside the ISO gives the participant instructions.
 - **Diagnostics and system tools.** Kernel Lab (read-only, WinDbg-style), Hyper-V Manager, Virtual Machine Manager, Event Viewer, Performance Monitor, Device Manager (PnP model stored under `HKLM\...\Enum`), and boot recovery (Safe Mode, boot log, Startup Menu).
 - **Offline "networking".** Dial-Up Networking is a registry-backed state machine; intranet pages are served from the guest filesystem; Internet Explorer and Network Neighborhood consume the same model without touching any browser network primitive.
 - **Host file exchange.** Host files are read only after a user-initiated picker, and can be mounted as `A:` (floppy) or `D:` (CD-ROM). Ejecting bumps a generation number so stale references are detected.
@@ -49,6 +52,7 @@ node tools/kernel_test.mjs         # 478 kernel / NT ABI checks
 node tools/hv_test.mjs             # 417 Hyper-V / VBS / VT-x checks
 node tools/snapshot_test.mjs       # snapshot format checks
 python3 tools/serve.py -p 8098     # static server with COOP/COEP and no-store
+./tools/build_w98_ctf_iso.sh      # rebuild web/games/w98-ctf.iso from its source
 ```
 
 Requires a clang with the `wasm32-unknown-unknown` target. COOP/COEP headers let DOSBox-WASM use SharedArrayBuffer.
@@ -61,6 +65,8 @@ Requires a clang with the `wasm32-unknown-unknown` target. COOP/COEP headers let
 | Ctrl+Alt+Del | Close Program | Alt+F4 | Close window |
 | F2 | Rename icon | Delete | Send to Recycle Bin |
 | F5 | Refresh desktop | Run → `CRASH98` | Kernel panic, blue screen |
+
+The Windows 98 VM has its own DOSBox controls: `Ctrl+F10` captures or releases the mouse, `Esc` releases a captured pointer, `Alt+Enter` toggles fullscreen, `P` pauses, `F5` saves the emulator's changed files, and `F9` restores them. A disk image must already be bootable; installation media still needs a writable hard-disk image for setup.
 
 ## Assets and licensing
 

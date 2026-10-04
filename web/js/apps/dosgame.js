@@ -6,7 +6,7 @@
  *
  * App-level API used (see vendor/js-dos/emulators/types/emulators.d.ts):
  *   emulators.bundleConfig(bytes)        -> { dosboxConf, jsdosConf } | null
- *   emulators.dosboxDirect(bytes, opts)  -> CommandInterface
+ *   emulators.dosboxDirect(bytes, opts) / dosboxXDirect(init, opts) -> CommandInterface
  *   ci.events().onFrameSize / onFrame / onSoundPush / onExit / onMessage
  *   ci.pause() ci.resume() ci.mute() ci.unmute() ci.persist() ci.exit()
  *   ci.sendKeyEvent(code, pressed) ci.sendMouseMotion() ci.sendMouseButton()
@@ -431,17 +431,22 @@
   /* ---------------------------------------------------------- the emulator  */
 
   function createGame(win, args) {
-    if (win.setIcon) { win.setIcon('dos'); }
+    args = args || {};
+    if (win.setIcon) { win.setIcon(args.icon || (args.kind === 'win98' ? 'my-computer' : 'dos')); }
     win.claimKeys();
     win.setTitle(args.title || 'DOS Game');
 
     var bundleUrl = localUrl(args.bundle);
-    var gameId = (bundleUrl.split('/').pop() || 'game').replace(/\.jsdos$/i, '');
+    var directInit = Array.isArray(args.init) ? args.init.slice() : null;
+    var directBundle = args.bundleBytes instanceof Uint8Array ? args.bundleBytes : null;
+    var gameId = args.id || (bundleUrl ? (bundleUrl.split('/').pop() || 'game').replace(/\.jsdos$/i, '') : 'win98');
     var SAVE_PATH = 'C:\\My Documents\\dos-' + gameId + '.sav';
 
     var st = {
       ci: null,
-      bytes: null,
+      bytes: directBundle,
+      directInit: directInit,
+      dosboxX: !!args.dosboxX,
       closing: false,
       booted: false,
       userPaused: false,
@@ -644,6 +649,15 @@
       showLoading('Loading ' + (args.title || gameId) + '…', 0, '');
       return loadEmulators().then(function (E) {
         st.emuVersion = E.version || st.emuVersion;
+        var useDosboxX = st.dosboxX && typeof E.dosboxXDirect === 'function';
+        var engine = (useDosboxX ? E.dosboxXDirect : E.dosboxDirect).bind(E);
+        var engineName = useDosboxX ? 'DOSBox-X' : 'DOSBox';
+        if (st.directInit) {
+          showLoading('Starting ' + engineName + '…', 100, 'Windows 98 disk image');
+          var init = st.directInit.slice();
+          if (changes) { init.push(changes); }
+          return engine(init, {});
+        }
         var bytes = saved ? Promise.resolve(saved) :
           download(bundleUrl, function (loaded, total) {
             var pct = total ? (loaded / total) * 100 : 0;
@@ -652,12 +666,12 @@
           });
         return bytes.then(function (b) {
           st.bytes = b;
-          showLoading('Starting DOSBox…', 100, fmtBytes(b.length) + ' bundle');
+          showLoading('Starting ' + engineName + '…', 100, fmtBytes(b.length) + ' bundle');
           return E.bundleConfig(b).then(function (config) {
             if (!config || !config.dosboxConf) {
               throw new Error('bundle has no .jsdos/dosbox.conf');
             }
-            return E.dosboxDirect(changes ? [b, changes] : b, {});
+            return engine(changes ? [b, changes] : b, {});
           });
         });
       }).then(function (ci) {
@@ -670,7 +684,8 @@
         hideLoading();
         win.setStatus([{ text: 'Failed to start game' }, { text: String(err.message || err) }]);
         if (W98.dialog) {
-          W98.dialog.alert('DOS Games', 'Unable to start the game:\n\n' + (err.message || err), 'error');
+          W98.dialog.alert(args.kind === 'win98' ? 'Windows 98 VM' : 'DOS Games',
+            'Unable to start the game:\n\n' + (err.message || err), 'error');
         }
       });
     }
@@ -756,22 +771,26 @@
     }
 
     function showLicences() {
-      W98.dialog.alert('Emulator & Licences',
-        'Emulator: js-dos ' + st.emuVersion + ' / DOSBox compiled to WebAssembly, ' +
-        'self-hosted in web/vendor/js-dos/. js-dos is GPL-2.0, DOSBox is GPL-2.0.\n\n' +
+      var content = args.kind === 'win98' ?
+        'Windows 98 is not included; this window runs an image you select locally.\n\n' :
         'The games in web/games/dos/ are shareware or freely redistributable ' +
         'releases; see games/dos/manifest.json for the source and licence of each ' +
-        'title.', 'info');
+        'title.\n\n';
+      W98.dialog.alert('Emulator & Licences',
+        'Emulator: js-dos ' + st.emuVersion + ' / ' + (st.dosboxX ? 'DOSBox-X' : 'DOSBox') +
+        ' compiled to WebAssembly, self-hosted in web/vendor/js-dos/. js-dos is GPL-2.0, ' +
+        'DOSBox and DOSBox-X are GPL-2.0.\n\n' + content, 'info');
     }
 
     function showAbout() {
       if (W98.aboutDialog) {
-        W98.aboutDialog(APP);
+        W98.aboutDialog(args.kind === 'win98' ? { id: 'win98vm', title: 'Windows 98 VM', icon: 'my-computer' } : APP);
         return;
       }
-      W98.dialog.alert('About DOS Games',
-        'DOS Games\nClassic MS-DOS titles in a Win98 window\n\n' +
-        'Emulator: js-dos ' + st.emuVersion + ' (DOSBox WebAssembly)', 'info');
+      W98.dialog.alert(args.kind === 'win98' ? 'About Windows 98 VM' : 'About DOS Games',
+        (args.kind === 'win98' ? 'Windows 98 VM\nA user-supplied disk image running in DOSBox-X WebAssembly\n\n' :
+          'DOS Games\nClassic MS-DOS titles in a Win98 window\n\n') +
+        'Emulator: js-dos ' + st.emuVersion + ' (' + (st.dosboxX ? 'DOSBox-X' : 'DOSBox') + ' WebAssembly)', 'info');
     }
 
     /* ---- keyboard ----------------------------------------------------- */
@@ -996,7 +1015,7 @@
       startMenuGroup: 'Games',
       create: function (win, args) {
         injectStyle();
-        if (!args || !args.bundle) { return createPicker(win); }
+        if (!args || (!args.bundle && !args.bundleBytes && !args.init)) { return createPicker(win); }
         return createGame(win, args);
       }
     });
