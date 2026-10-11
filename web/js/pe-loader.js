@@ -100,6 +100,7 @@
     this.relocations = [];
     this.importSlots = Object.create(null);
     this.hostSlots = Object.create(null);
+    this._relocationsApplied = false;
     this.image = new Uint8Array(this.sizeOfImage);
     this.image.set(raw.subarray(0, Math.min(this.sizeOfHeaders, raw.length)), 0);
     this.sections.forEach(function (s) {
@@ -183,9 +184,11 @@
     }
   };
   PEImage.prototype.applyRelocations = function (base) {
-    var target = this.isPE32Plus && typeof BigInt === 'function' ? BigInt(base) : Number(base), old = this.preferredBase;
+    var target = this.isPE32Plus && typeof BigInt === 'function' ? BigInt(base) : Number(base);
+    if (this._relocationsApplied && target === this.loadBase) return this;
+    var old = this._relocationsApplied ? this.loadBase : this.preferredBase;
     var delta = typeof target === 'bigint' ? target - BigInt(old) : target - Number(old);
-    if (delta === 0 || delta === 0n) { this.loadBase = target; this.entrypoint = target + (typeof target === 'bigint' ? BigInt(this.entryRva) : this.entryRva); return this; }
+    if (delta === 0 || delta === 0n) { this.loadBase = target; this.entrypoint = target + (typeof target === 'bigint' ? BigInt(this.entryRva) : this.entryRva); this._relocationsApplied = true; return this; }
     if (!this.relocations.length) fail('NO_RELOCATIONS', 'image has no relocation table for the requested load base');
     for (var i = 0; i < this.relocations.length; i++) {
       var r = this.relocations[i], p = r.rva;
@@ -193,7 +196,7 @@
       if (r.type === 3) { if (!rangeOk(p, 4, this.image.length)) fail('BAD_RELOC_TARGET', 'HIGHLOW relocation points outside image'); put32(this.image, p, (u32(this.image, p) + Number(delta)) >>> 0); }
       else if (r.type === 10) { if (!rangeOk(p, 8, this.image.length)) fail('BAD_RELOC_TARGET', 'DIR64 relocation points outside image'); put64(this.image, p, u64(this.image, p) + delta); }
     }
-    this.loadBase = target; this.entrypoint = target + (typeof target === 'bigint' ? BigInt(this.entryRva) : this.entryRva); return this;
+    this.loadBase = target; this.entrypoint = target + (typeof target === 'bigint' ? BigInt(this.entryRva) : this.entryRva); this._relocationsApplied = true; return this;
   };
   PEImage.prototype.resolveImports = function (resolver, options) {
     options = options || {};
@@ -366,7 +369,9 @@
   }
   function run(input, options) {
     options = options || {};
-    var resolver = options.resolveImport || (options.runtime && typeof options.runtime.resolve === 'function' ? function (dll, name, ordinal, imp) {
+    var resolver = options.resolveImport || (options.runtime && typeof options.runtime.resolveImport === 'function' ? function (dll, name, ordinal, imp) {
+      return options.runtime.resolveImport(dll, name, ordinal, imp);
+    } : options.runtime && typeof options.runtime.resolve === 'function' ? function (dll, name, ordinal, imp) {
       return options.runtime.resolve(dll, name, ordinal, imp);
     } : defaultResolver);
     var image = input instanceof PEImage ? input : parse(input, {
@@ -374,7 +379,7 @@
       resolveImport: resolver,
       allowUnresolved: !!options.allowUnresolved
     });
-    if (input instanceof PEImage && options.resolveImport) image.resolveImports(resolver, options);
+    if (input instanceof PEImage && image.imports.length && !Object.keys(image.hostSlots).length) image.resolveImports(resolver, options);
     var result = image.run(options);
     result.arch = image.arch; result.subsystem = image.subsystemName;
     result.console = image.isConsole; result.gui = image.isGui;
@@ -383,13 +388,13 @@
   }
   function runConsole(input, options) {
     options = options || {};
-    var image = input instanceof PEImage ? input : parse(input, options);
+    var image = input instanceof PEImage ? input : parse(input, { allowUnresolved: true, loadBase: options.loadBase });
     if (!image.isConsole) fail('SUBSYSTEM_NOT_CONSOLE', 'PE image is not a console executable');
     return run(image, options);
   }
   function runGui(input, options) {
     options = options || {};
-    var image = input instanceof PEImage ? input : parse(input, options);
+    var image = input instanceof PEImage ? input : parse(input, { allowUnresolved: true, loadBase: options.loadBase });
     if (!image.isGui) fail('SUBSYSTEM_NOT_GUI', 'PE image is not a GUI executable');
     return run(image, options);
   }
