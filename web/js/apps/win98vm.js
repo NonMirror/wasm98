@@ -3,7 +3,7 @@
  * Built-in images are shipped under web/games/ and loaded from the same local
  * wasm98 filesystem.  User images stay in the browser's memory for the life
  * of the VM.  The host file bridge is used only after the user presses the
- * picker button; no host paths are scanned and no image is uploaded.
+ * picker button or an explicit drop; no host paths are scanned and no image is uploaded.
  */
 (function () {
   'use strict';
@@ -47,6 +47,10 @@
 
   function imageType(name) {
     return ext(name) === 'iso' ? 'iso' : 'hdd';
+  }
+
+  function isImageName(name) {
+    return /\.(?:img|ima|iso|vhd|vhdx|hdd|raw)$/i.test(String(name || ''));
   }
 
   function imageLabel(name) {
@@ -189,6 +193,10 @@
     var status = document.createElement('div');
     status.style.cssText = 'min-height:30px;line-height:1.4;';
     status.textContent = 'No image selected.';
+    var drop = document.createElement('div');
+    drop.className = 'w98-vm-drop';
+    drop.style.cssText = 'border:1px dashed #555;background:#dfdfdf;text-align:center;padding:8px;color:#404040;';
+    drop.textContent = 'Drop a bootable image here';
     var buttons = document.createElement('div');
     buttons.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:auto;';
     var open = document.createElement('button');
@@ -203,6 +211,7 @@
     root.appendChild(builtins);
     root.appendChild(info);
     root.appendChild(status);
+    root.appendChild(drop);
     root.appendChild(buttons);
     win.el.appendChild(root);
     win.setStatus([{ text: 'DOSBox-X WebAssembly', width: 180 }, { text: 'Built-in + local image' }]);
@@ -212,6 +221,7 @@
     function setBusy(value) {
       open.disabled = value;
       builtinButtons.forEach(function (button) { button.disabled = value; });
+      drop.style.opacity = value ? '0.65' : '1';
     }
 
     function showError(err) {
@@ -239,6 +249,21 @@
         init: init
       });
       win.close();
+    }
+
+    function readHostImage(file) {
+      var b = bridge();
+      if (!b || typeof b.readImage !== 'function') {
+        throw new Error('Host file access is unavailable in this browser.');
+      }
+      if (!file || !isImageName(file.name)) {
+        throw new Error('Drop a .img, .ima, .vhd, .vhdx, .hdd, .raw, or .iso image.');
+      }
+      var name = imageLabel(file.name);
+      status.textContent = 'Reading ' + name + ' (' + fmtBytes(file.size) + ')…';
+      return b.readImage(file).then(function (bytes) {
+        launchImage(name, bytes, 'user');
+      });
     }
 
     BUILTIN_IMAGES.forEach(function (entry, index) {
@@ -269,11 +294,7 @@
           return null;
         }
         var file = files[0];
-        var name = imageLabel(file.name);
-        status.textContent = 'Reading ' + name + ' (' + fmtBytes(file.size) + ')…';
-        return b.readImage(file).then(function (bytes) {
-          launchImage(name, bytes, 'user');
-        });
+        return readHostImage(file);
       }).catch(function (err) {
         showError(err);
       }).then(function () {
@@ -281,7 +302,43 @@
       });
     });
 
-    return {};
+    function dragLeave() {
+      drop.classList.remove('w98-vm-drop-active');
+      drop.style.background = '#dfdfdf';
+      drop.style.color = '#404040';
+    }
+    function dragOver(event) {
+      var files = event.dataTransfer && event.dataTransfer.files;
+      if (!files || !files.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = 'copy';
+      drop.classList.add('w98-vm-drop-active');
+      drop.style.background = '#ffffc0';
+      drop.style.color = '#000080';
+    }
+    function dropImage(event) {
+      var files = event.dataTransfer && event.dataTransfer.files;
+      if (!files || !files.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragLeave();
+      if (open.disabled) return;
+      setBusy(true);
+      Promise.resolve().then(function () { return readHostImage(files[0]); }).catch(showError).then(function () {
+        if (!win.closed) setBusy(false);
+      });
+    }
+    drop.addEventListener('dragover', dragOver);
+    drop.addEventListener('dragleave', dragLeave);
+    drop.addEventListener('drop', dropImage);
+
+    return { onClose: function () {
+      dragLeave();
+      drop.removeEventListener('dragover', dragOver);
+      drop.removeEventListener('dragleave', dragLeave);
+      drop.removeEventListener('drop', dropImage);
+    } };
   }
 
   W98.registerApp({
