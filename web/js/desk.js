@@ -19,6 +19,7 @@
   var POSKEY = 'HKEY_CURRENT_USER\\Software\\W98\\IconPos';
 
   var desktop, holder, taskbar, tasks, tray, clockEl, startBtn, startMenu, quickLaunch;
+  var hostDropHint, hostDropDepth = 0, hostDropBusy = false;
   var iconEls = {};
   var selIcons = [];
   var startOpen = false;
@@ -319,6 +320,93 @@
   }
 
   /* desktop background behaviour: rubber band, context menu */
+  function hostFileBridge() {
+    return W98.hostFiles || global.W98HostFileBridge || global.hostFileBridge || null;
+  }
+
+  function hostFileDrop(event) {
+    var dt = event && event.dataTransfer;
+    return !!(dt && dt.files && dt.files.length);
+  }
+
+  function desktopDropTarget(event) {
+    /* A window or desktop icon may own its own drop target.  Restrict the
+       desktop importer to the blank holder so a file is copied only once. */
+    return !!(event && (event.target === holder || event.target === desktop));
+  }
+
+  function setHostDropHint(active, text) {
+    if (!hostDropHint) return;
+    hostDropHint.textContent = text || 'Drop files here to copy them to the Windows desktop';
+    hostDropHint.style.display = active ? 'block' : 'none';
+    if (desktop) desktop.classList.toggle('w98-host-drop-active', !!active);
+  }
+
+  function importHostDrop(files) {
+    var bridge = hostFileBridge();
+    var importer = bridge && typeof bridge.importToGuest === 'function' ? bridge.importToGuest :
+      (W98.transfer && typeof W98.transfer.importToGuest === 'function' ? W98.transfer.importToGuest : null);
+    if (!importer) return Promise.reject(new Error('Host file transfer is unavailable.'));
+    try {
+      var result = bridge && importer === bridge.importToGuest
+        ? importer.call(bridge, files, 'C:\\WINDOWS\\Desktop', { fs: W98.fs })
+        : importer.call(W98.transfer, files, 'C:\\WINDOWS\\Desktop', W98.fs);
+      return Promise.resolve(result);
+    } catch (e) { return Promise.reject(e); }
+  }
+
+  function wireHostDrop() {
+    if (!holder || !hostDropHint) return;
+    function dragenter(ev) {
+      if (!hostFileDrop(ev) || !desktopDropTarget(ev)) return;
+      ev.preventDefault();
+      hostDropDepth++;
+      setHostDropHint(true);
+    }
+    function dragover(ev) {
+      if (!hostFileDrop(ev) || !desktopDropTarget(ev)) return;
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+      setHostDropHint(true);
+    }
+    function dragleave(ev) {
+      if (!hostFileDrop(ev) || !desktopDropTarget(ev)) return;
+      hostDropDepth = Math.max(0, hostDropDepth - 1);
+      if (!hostDropDepth) setHostDropHint(false);
+    }
+    function drop(ev) {
+      if (!hostFileDrop(ev) || !desktopDropTarget(ev)) return;
+      ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+      hostDropDepth = 0;
+      setHostDropHint(false);
+      if (hostDropBusy) return;
+      hostDropBusy = true;
+      var files = Array.prototype.slice.call(ev.dataTransfer.files);
+      importHostDrop(files).then(function (result) {
+        hostDropBusy = false;
+        var count = Number(result && (result.count != null ? result.count : (result.imported || result.files || []).length)) || files.length;
+        var failed = result && result.failed ? result.failed.length : 0;
+        buildDesktopIcons();
+        if (failed) {
+          W98.dialog.alert('Windows', 'Copied ' + count + ' file' + (count === 1 ? '' : 's') +
+            ' to C:\\WINDOWS\\Desktop. ' + failed + ' item' + (failed === 1 ? '' : 's') + ' failed.', 'warn');
+        } else {
+          setHostDropHint(true, 'Copied ' + count + ' file' + (count === 1 ? '' : 's') + ' to the Windows desktop');
+          setTimeout(function () { if (!hostDropBusy) setHostDropHint(false); }, 1500);
+        }
+      }, function (error) {
+        hostDropBusy = false;
+        setHostDropHint(false);
+        W98.dialog.alert('Windows', error && error.message ? error.message : String(error), 'error');
+      });
+    }
+    on(holder, 'dragenter', dragenter);
+    on(holder, 'dragover', dragover);
+    on(holder, 'dragleave', dragleave);
+    on(holder, 'drop', drop);
+  }
+
   function wireDesktop() {
     on(holder, 'mousedown', function (ev) {
       if (ev.button !== 0) return;
@@ -361,6 +449,7 @@
       ev.preventDefault();
       W98.menu.contextMenu(desktopContextItems(), ev);
     });
+    wireHostDrop();
   }
 
   function desktopContextItems() {
@@ -1218,6 +1307,9 @@
     holder = el('div');
     holder.style.cssText = 'position:absolute;inset:0;z-index:1';
     desktop.appendChild(holder);
+    hostDropHint = el('div', 'w98-host-drop-hint', 'Drop files here to copy them to the Windows desktop');
+    hostDropHint.style.display = 'none';
+    desktop.appendChild(hostDropHint);
     document.body.appendChild(desktop);
 
     taskbar = el('div');

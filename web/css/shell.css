@@ -42,6 +42,28 @@ img, canvas.w98-icon { -webkit-user-drag: none; user-select: none; }
   background-position: 0 0;
 }
 
+/* The desktop accepts files dragged from the host browser.  The hint is
+   pointer-transparent so it never steals a drop from an application window
+   or from Explorer's own folder target. */
+.w98-host-drop-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 11000;
+  padding: 6px 12px;
+  border: 1px dotted #fff;
+  background: #000080;
+  color: #fff;
+  font: 11px Tahoma, Arial, sans-serif;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.w98-host-drop-active {
+  outline: 1px dotted #fff;
+  outline-offset: -4px;
+}
+
 .dicon {
   position: absolute;
   width: 75px;
