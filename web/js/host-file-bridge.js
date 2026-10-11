@@ -540,6 +540,63 @@
   }
 
   function isFileDrop(event) { return !!(event && event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length); }
+  function clipboardFiles(event) {
+    var data = event && event.clipboardData, files = [];
+    if (!data) return files;
+    if (data.files && data.files.length) files = Array.prototype.slice.call(data.files);
+    if (!files.length && data.items && data.items.length) {
+      Array.prototype.forEach.call(data.items, function (item) {
+        if (item && item.kind === 'file' && typeof item.getAsFile === 'function') {
+          var file = item.getAsFile(); if (file) files.push(file);
+        }
+      });
+    }
+    return files;
+  }
+  function isFilePaste(event) {
+    var data = event && event.clipboardData;
+    if (clipboardFiles(event).length) return true;
+    if (!data) return false;
+    if (data.items && Array.prototype.some.call(data.items, function (item) { return item && item.kind === 'file'; })) return true;
+    return !!(data.types && Array.prototype.some.call(data.types, function (type) {
+      var mime = String(type).toLowerCase();
+      return mime === 'files' || /^image\//.test(mime) || /^audio\//.test(mime) || /^video\//.test(mime) ||
+        mime === 'application/pdf' || mime === 'application/octet-stream';
+    }));
+  }
+  function clipboardName(type, index) {
+    var ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/bmp': '.bmp', 'image/webp': '.webp', 'audio/wav': '.wav', 'application/pdf': '.pdf' }[String(type || '').toLowerCase()] || '.bin';
+    return 'clipboard-' + (index + 1) + ext;
+  }
+  function readClipboardFiles(event) {
+    var direct = clipboardFiles(event);
+    if (direct.length) return Promise.resolve(direct);
+    var nav = global.navigator, clipboard = nav && nav.clipboard;
+    if (!clipboard || typeof clipboard.read !== 'function') return Promise.resolve([]);
+    return Promise.resolve().then(function () { return clipboard.read(); }).then(function (items) {
+      var files = [];
+      return (items || []).reduce(function (chain, item) {
+        var types = item && item.types ? Array.prototype.slice.call(item.types) : [];
+        types = types.filter(function (type) { return !/^text\//i.test(String(type)); });
+        return chain.then(function () {
+          return types.reduce(function (next, type) {
+            return next.then(function () {
+              if (!item || typeof item.getType !== 'function') return null;
+              return Promise.resolve(item.getType(type)).then(function (blob) {
+                if (!blob) return;
+                var name = clipboardName(type, files.length), file = blob;
+                try {
+                  if (typeof global.File === 'function') file = new global.File([blob], name, { type: type, lastModified: Date.now() });
+                  else { file.name = name; file.lastModified = Date.now(); }
+                } catch (e) { try { file.name = name; } catch (ignore) {} }
+                files.push(file);
+              });
+            });
+          }, Promise.resolve());
+        });
+      }, Promise.resolve()).then(function () { return files; });
+    }).catch(function () { return []; });
+  }
   function installDropTarget(element, options) {
     options = options || {};
     if (!element || !element.addEventListener) throw error('INVALID_DROP_TARGET', 'A drop target element is required.');
@@ -555,6 +612,24 @@
     }
     element.addEventListener('dragover', over); element.addEventListener('drop', drop);
     return function () { element.removeEventListener('dragover', over); element.removeEventListener('drop', drop); };
+  }
+  function installPasteTarget(element, options) {
+    options = options || {};
+    if (!element || !element.addEventListener) throw error('INVALID_PASTE_TARGET', 'A paste target element is required.');
+    var canRoute = typeof options.canRoute === 'function' ? options.canRoute : function (ev) { return isFilePaste(ev); };
+    function paste(ev) {
+      if (!canRoute(ev) || !isFilePaste(ev)) return;
+      ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+      readClipboardFiles(ev).then(function (files) {
+        if (!files.length) throw error('CLIPBOARD_EMPTY', 'The clipboard does not contain a readable file.');
+        return importToGuest(files, options.destination || 'C:\\My Documents', options);
+      }).then(function (result) {
+        if (typeof options.onImported === 'function') options.onImported(result);
+      }).catch(function (e) { if (typeof options.onError === 'function') options.onError(e); });
+    }
+    element.addEventListener('paste', paste);
+    return function () { element.removeEventListener('paste', paste); };
   }
 
   API = {
@@ -610,6 +685,8 @@
     readImage: readHostImage,
     exportVirtualFile: exportVirtualFile, exportVirtualFiles: exportVirtualFiles, exportFiles: exportVirtualFiles,
     isFileDrop: isFileDrop, installDropTarget: installDropTarget,
+    clipboardFiles: clipboardFiles, isFilePaste: isFilePaste, readClipboardFiles: readClipboardFiles,
+    installPasteTarget: installPasteTarget,
     lastError: null,
     _mediaSerial: function () { return ++mediaSerial; }
   };

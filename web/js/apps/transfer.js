@@ -1,7 +1,8 @@
 /* ============================================================================
  * transfer.js — host/guest file exchange utility.
  *
- * All host access starts with an explicit browser file picker or a user drop.
+ * All host access starts with an explicit browser file picker, user drop, or
+ * clipboard paste.
  * The host-file bridge is preferred when present; the local fallback below uses
  * the same File/Blob APIs and keeps every byte in the guest W98 filesystem.
  * No host paths are ever scanned and no localStorage is used.
@@ -263,6 +264,64 @@
     return true;
   }
 
+  /* Read files from a browser paste event (or from the asynchronous
+     Clipboard API when called by the Paste button).  Keep this shim here as
+     well as in host-file-bridge.js so the transfer app remains usable when a
+     lightweight embedding omits the bridge implementation. */
+  function readClipboardFiles(event) {
+    var b = bridge();
+    if (b && typeof b.readClipboardFiles === 'function') {
+      try { return promise(b.readClipboardFiles(event)).then(normalise); } catch (e) { return Promise.reject(e); }
+    }
+    var direct = [];
+    try {
+      var data = event && event.clipboardData;
+      if (data && data.files && data.files.length) direct = Array.prototype.slice.call(data.files);
+      if (!direct.length && data && data.items && data.items.length) {
+        Array.prototype.forEach.call(data.items, function (item) {
+          if (item && item.kind === 'file' && typeof item.getAsFile === 'function') {
+            var f = item.getAsFile(); if (f) direct.push(f);
+          }
+        });
+      }
+    } catch (ignore) {}
+    if (direct.length) return Promise.resolve(normalise(direct));
+    var nav = global.navigator, clipboard = nav && nav.clipboard;
+    if (!clipboard || typeof clipboard.read !== 'function') return Promise.resolve([]);
+    return promise(clipboard.read()).then(function (items) {
+      var files = [];
+      return (items || []).reduce(function (chain, item) {
+        var types = item && item.types ? Array.prototype.slice.call(item.types) : [];
+        return chain.then(function () {
+          return types.filter(function (type) { return !/^text\//i.test(String(type)); }).reduce(function (next, type) {
+            return next.then(function () {
+              if (!item || typeof item.getType !== 'function') return null;
+              return promise(item.getType(type)).then(function (blob) {
+                if (!blob) return;
+                var ext = String(type || '').split('/').pop() || 'bin', name = 'clipboard-' + (files.length + 1) + '.' + ext;
+                try { if (typeof global.File === 'function') blob = new global.File([blob], name, { type: type }); else blob.name = name; } catch (e) { try { blob.name = name; } catch (ignore) {} }
+                files.push(blob);
+              });
+            });
+          }, Promise.resolve());
+        });
+      }, Promise.resolve()).then(function () { return normalise(files); });
+    }).catch(function () { return []; });
+  }
+
+  function pasteFromClipboard(options) {
+    options = options || {};
+    if (options.clipboardData && !options.event) options = { event: options };
+    var destination = normDest(options.destination || DEST), fs = options.fs || W98.fs;
+    return readClipboardFiles(options.event).then(function (files) {
+      if (!files.length) {
+        var empty = new Error('The clipboard does not contain a readable file.'); empty.code = 'CLIPBOARD_EMPTY';
+        throw empty;
+      }
+      return imported(files, destination, fs);
+    });
+  }
+
   /* Public API used by Explorer/the shell and by the media apps. */
   W98.transfer = {
     version: 1,
@@ -278,6 +337,11 @@
     exportFiles: exported,
     exportVirtualFiles: exported,
     routeDrop: routeDrop,
+    pasteFromClipboard: pasteFromClipboard,
+    paste: pasteFromClipboard,
+    pasteFiles: pasteFromClipboard,
+    importFromClipboard: pasteFromClipboard,
+    readClipboardFiles: readClipboardFiles,
     canRouteDrop: function (path) { return safeTarget(path); },
     installDropTarget: function (node, opts) {
       opts = opts || {};
@@ -299,6 +363,34 @@
       node.addEventListener('dragover', over); node.addEventListener('dragleave', leave); node.addEventListener('drop', drop);
       return function () { node.removeEventListener('dragover', over); node.removeEventListener('dragleave', leave); node.removeEventListener('drop', drop); };
     },
+    installPasteTarget: function (node, opts) {
+      opts = opts || {};
+      if (!node || !node.addEventListener) return function () { };
+      var destination = normDest(opts.destination || DEST), b = bridge();
+      if (b && typeof b.installPasteTarget === 'function') {
+        try {
+          return b.installPasteTarget(node, { fs: W98.fs, destination: destination,
+            canRoute: function (e) {
+              if (!safeTarget(destination)) return false;
+              return !b.isFilePaste || b.isFilePaste(e);
+            },
+            onImported: function (r) { if (opts.onDone) opts.onDone(bridgeReport(r)); },
+            onError: function (e) { if (opts.onError) opts.onError(e); }
+          });
+        } catch (ignore) { /* local listener below remains the shim fallback */ }
+      }
+      function paste(event) {
+        if (!safeTarget(destination)) return;
+        if (b && typeof b.isFilePaste === 'function' && !b.isFilePaste(event)) return;
+        event.preventDefault();
+        if (event.stopPropagation) event.stopPropagation();
+        pasteFromClipboard({ event: event, destination: destination, fs: W98.fs }).then(function (r) {
+          if (opts.onDone) opts.onDone(bridgeReport(r));
+        }).catch(function (e) { if (opts.onError) opts.onError(e); });
+      }
+      node.addEventListener('paste', paste);
+      return function () { node.removeEventListener('paste', paste); };
+    },
     bridge: bridge
   };
 
@@ -314,10 +406,11 @@
       var buttons = el('div', 'row w98-transfer-buttons');
       var importFilesButton = el('button', 'w98-transfer-button', 'Import Files…');
       var importFolderButton = el('button', 'w98-transfer-button', 'Import Folder…');
+      var pasteButton = el('button', 'w98-transfer-button', 'Paste Files');
       var exportButton = el('button', 'w98-transfer-button', 'Export Selected');
       var refreshButton = el('button', 'w98-transfer-button', 'Refresh');
-      buttons.appendChild(importFilesButton); buttons.appendChild(importFolderButton); buttons.appendChild(exportButton); buttons.appendChild(refreshButton);
-      var drop = tel('div', 'w98-transfer-drop', 'Drop files here to copy them to ' + destination);
+      buttons.appendChild(importFilesButton); buttons.appendChild(importFolderButton); buttons.appendChild(pasteButton); buttons.appendChild(exportButton); buttons.appendChild(refreshButton);
+      var drop = tel('div', 'w98-transfer-drop', 'Drop files here or press Ctrl/Cmd+V to copy them to ' + destination);
       var list = el('div', 'w98-transfer-list');
       root.appendChild(intro); root.appendChild(buttons); root.appendChild(drop); root.appendChild(list); root.appendChild(status);
       win.el.style.display = 'flex'; win.el.style.flexDirection = 'column'; win.el.style.overflow = 'hidden'; win.el.appendChild(root);
@@ -355,6 +448,11 @@
       function importFromHost(directory) {
         W98.transfer.importFromHost({ directory: directory, destination: destination }).then(done).catch(function (e) { setStatus(fsErr(e), true); });
       }
+      function pasteFromHost() {
+        setStatus('Reading clipboard…');
+        W98.transfer.pasteFromClipboard({ destination: destination }).then(done).catch(function (e) { setStatus(fsErr(e), true); });
+      }
+      pasteButton.onclick = pasteFromHost;
       exportButton.onclick = function () {
         if (!selected.length) { setStatus('Select one or more files to export.', true); return; }
         setStatus('Preparing browser download…');
@@ -362,12 +460,14 @@
       };
       refreshButton.onclick = refresh;
       var removeDrop = W98.transfer.installDropTarget(drop, { destination: destination, onDone: done });
+      var removePaste = W98.transfer.installPasteTarget(win.el, { destination: destination, onDone: done, onError: function (e) { setStatus(fsErr(e), true); } });
       win.setMenu([{ label: '&File', items: [
         { label: '&Import Files…', onclick: importFilesButton.onclick }, { label: 'Import &Folder…', onclick: importFolderButton.onclick },
+        { label: '&Paste Files', accel: 'Ctrl+V', onclick: pasteButton.onclick },
         { label: '&Export Selected', onclick: exportButton.onclick }, { type: 'sep' }, { label: '&Close', onclick: function () { win.close(); } }
-      ] }, { label: '&Help', items: [{ label: '&About File Transfer', onclick: function () { W98.dialog.alert('File Transfer', 'Version 1 media bridge. Host access requires an explicit picker or drop.', 'info'); } }] }]);
+      ] }, { label: '&Help', items: [{ label: '&About File Transfer', onclick: function () { W98.dialog.alert('File Transfer', 'Version 1 media bridge. Host access requires an explicit picker, drop, or clipboard paste.', 'info'); } }] }]);
       refresh();
-      return { onClose: function () { if (removeDrop) removeDrop(); } };
+      return { onClose: function () { if (removeDrop) removeDrop(); if (removePaste) removePaste(); } };
     }
   });
 })(window);

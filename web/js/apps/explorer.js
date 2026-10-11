@@ -115,6 +115,60 @@
         }).catch(function (err) { W98.dialog.alert('Copy to ' + state.path, err.message || String(err), 'error'); });
       });
 
+      /* A host file copied in the native file manager arrives as
+         ClipboardEvent.files.  Explorer owns paste while its window is
+         focused, so the desktop-level handler does not also copy the same
+         files to C:\\WINDOWS\\Desktop. */
+      function clipboardFiles(event) {
+        var data = event && event.clipboardData;
+        var h = W98.hostFiles || window.W98HostFileBridge || window.hostFileBridge;
+        if (h && typeof h.clipboardFiles === 'function') {
+          try {
+            var bridged = h.clipboardFiles(event);
+            if (bridged && bridged.length) return bridged;
+          } catch (ignore) { }
+        }
+        if (data && data.files && data.files.length) return Array.prototype.slice.call(data.files);
+        if (data && data.items && data.items.length) {
+          var files = [];
+          Array.prototype.forEach.call(data.items, function (item) {
+            if (item && item.kind === 'file' && typeof item.getAsFile === 'function') {
+              var file = item.getAsFile();
+              if (file) files.push(file);
+            }
+          });
+          return files;
+        }
+        return [];
+      }
+      function pasteHostFiles(event) {
+        var files = clipboardFiles(event);
+        var h = W98.hostFiles || window.W98HostFileBridge || window.hostFileBridge;
+        var filePaste = h && typeof h.isFilePaste === 'function' ? h.isFilePaste(event) : !!files.length;
+        if (!filePaste || state.special || !/^C:\\/i.test(state.path)) return;
+        event.preventDefault();
+        if (event.stopPropagation) event.stopPropagation();
+        var p;
+        try {
+          if (h && typeof h.readClipboardFiles === 'function') {
+            p = Promise.resolve(h.readClipboardFiles(event)).then(function (read) {
+              if (!read || !read.length) throw new Error('The clipboard does not contain a readable file.');
+              return h.importToGuest(read, state.path, { fs: W98.fs });
+            });
+          } else if (h && typeof h.importToGuest === 'function') p = h.importToGuest(files, state.path, { fs: W98.fs });
+          else if (W98.transfer && typeof W98.transfer.importToGuest === 'function') p = W98.transfer.importToGuest(files, state.path, W98.fs);
+          else throw new Error('Host file transfer is unavailable.');
+        } catch (e) { p = Promise.reject(e); }
+        Promise.resolve(p).then(function (r) {
+          render();
+          var count = Number(r && (r.count != null ? r.count : (r.imported || r.files || []).length)) || files.length;
+          var failed = r && r.failed ? r.failed.length : 0;
+          if (failed) W98.dialog.alert('Paste to ' + state.path, 'Pasted ' + count + ' file' + (count === 1 ? '' : 's') +
+            '. ' + failed + ' item' + (failed === 1 ? '' : 's') + ' failed.', 'warn');
+        }).catch(function (err) { W98.dialog.alert('Paste to ' + state.path, err.message || String(err), 'error'); });
+      }
+      win.el.addEventListener('paste', pasteHostFiles);
+
       win.el.style.display = 'flex';
       win.el.style.flexDirection = 'column';
       win.el.appendChild(toolbar);
@@ -560,7 +614,11 @@
         if (e.key === 'Backspace') { upOne(); e.preventDefault(); }
         if (e.key === 'Delete') { doDelete(); }
       });
-      win.on('close', function () { clip.items = []; if (window.removeEventListener) window.removeEventListener('w98-media-change', mediaRefresh); });
+      win.on('close', function () {
+        clip.items = [];
+        win.el.removeEventListener('paste', pasteHostFiles);
+        if (window.removeEventListener) window.removeEventListener('w98-media-change', mediaRefresh);
+      });
 
       state.history.push({ path: state.path, special: state.special });
       state.hi = 0;

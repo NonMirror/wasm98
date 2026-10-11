@@ -329,6 +329,53 @@
     return !!(dt && dt.files && dt.files.length);
   }
 
+  function hostClipboardFiles(event) {
+    var data = event && event.clipboardData;
+    var bridge = hostFileBridge();
+    if (bridge && typeof bridge.clipboardFiles === 'function') {
+      try {
+        var bridged = bridge.clipboardFiles(event);
+        if (bridged && bridged.length) return bridged;
+      } catch (ignore) { }
+    }
+    if (data && data.files && data.files.length) return Array.prototype.slice.call(data.files);
+    if (data && data.items && data.items.length) {
+      var files = [];
+      Array.prototype.forEach.call(data.items, function (item) {
+        if (item && item.kind === 'file' && typeof item.getAsFile === 'function') {
+          var file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      });
+      return files;
+    }
+    return [];
+  }
+
+  function hostFilePaste(event) {
+    var bridge = hostFileBridge();
+    if (bridge && typeof bridge.isFilePaste === 'function') return !!bridge.isFilePaste(event);
+    return hostClipboardFiles(event).length > 0;
+  }
+
+  function readHostClipboard(event) {
+    var bridge = hostFileBridge();
+    if (bridge && typeof bridge.readClipboardFiles === 'function') {
+      try { return Promise.resolve(bridge.readClipboardFiles(event)); } catch (e) { return Promise.reject(e); }
+    }
+    return Promise.resolve(hostClipboardFiles(event) || []);
+  }
+
+  function pasteInsideWindow(event) {
+    function inside(node) {
+      for (var cur = node; cur && cur !== document; cur = cur.parentNode) {
+        if (cur.classList && cur.classList.contains('w98-window')) return true;
+      }
+      return false;
+    }
+    return inside(event && event.target) || inside(document.activeElement);
+  }
+
   function desktopDropTarget(event) {
     /* A window may own its own drop target.  Everything else inside the
        desktop holder, including an icon, belongs to the desktop background. */
@@ -344,7 +391,7 @@
 
   function setHostDropHint(active, text) {
     if (!hostDropHint) return;
-    hostDropHint.textContent = text || 'Drop files here to copy them to the Windows desktop';
+    hostDropHint.textContent = text || 'Drop or paste files here to copy them to the Windows desktop';
     hostDropHint.style.display = active ? 'block' : 'none';
     if (desktop) desktop.classList.toggle('w98-host-drop-active', !!active);
   }
@@ -427,6 +474,40 @@
     on(holder, 'drop', drop);
   }
 
+  function wireHostClipboard() {
+    /* A browser paste carries host files through ClipboardEvent.files.  Keep
+       this listener at the document boundary so an Explorer or another W98
+       window can consume its own paste first; text-only clipboard contents
+       remain untouched. */
+    on(document, 'paste', function (event) {
+      if (pasteInsideWindow(event)) return;
+      if (!hostFilePaste(event)) return;
+      event.preventDefault();
+      if (event.stopPropagation) event.stopPropagation();
+      if (hostDropBusy) return;
+      hostDropBusy = true;
+      readHostClipboard(event).then(function (files) {
+        if (!files || !files.length) throw new Error('The clipboard does not contain a readable file.');
+        return importHostDrop(files);
+      }).then(function (result) {
+        hostDropBusy = false;
+        var count = Number(result && (result.count != null ? result.count : (result.imported || result.files || []).length)) || 1;
+        var failed = result && result.failed ? result.failed.length : 0;
+        buildDesktopIcons();
+        if (failed) {
+          W98.dialog.alert('Windows', 'Pasted ' + count + ' file' + (count === 1 ? '' : 's') +
+            ' to C:\\WINDOWS\\Desktop. ' + failed + ' item' + (failed === 1 ? '' : 's') + ' failed.', 'warn');
+        } else {
+          setHostDropHint(true, 'Pasted ' + count + ' file' + (count === 1 ? '' : 's') + ' to the Windows desktop');
+          setTimeout(function () { if (!hostDropBusy) setHostDropHint(false); }, 1500);
+        }
+      }, function (error) {
+        hostDropBusy = false;
+        W98.dialog.alert('Windows', error && error.message ? error.message : String(error), 'error');
+      });
+    });
+  }
+
   function wireDesktop() {
     on(holder, 'mousedown', function (ev) {
       if (ev.button !== 0) return;
@@ -435,6 +516,7 @@
          bubbled press from a window must never install document-wide drag
          listeners or create a marquee behind that window. */
       if (ev.target !== holder) return;
+      if (holder.focus) holder.focus();
       deselectAll();
       W98.closeMenus();
       var band = el('div');
@@ -470,6 +552,7 @@
       W98.menu.contextMenu(desktopContextItems(), ev);
     });
     wireHostDrop();
+    wireHostClipboard();
   }
 
   function desktopContextItems() {
@@ -1325,9 +1408,10 @@
     desktop = el('div');
     desktop.id = 'desktop';
     holder = el('div');
-    holder.style.cssText = 'position:absolute;inset:0;z-index:1';
+    holder.tabIndex = 0;
+    holder.style.cssText = 'position:absolute;inset:0;z-index:1;outline:none';
     desktop.appendChild(holder);
-    hostDropHint = el('div', 'w98-host-drop-hint', 'Drop files here to copy them to the Windows desktop');
+    hostDropHint = el('div', 'w98-host-drop-hint', 'Drop or paste files here to copy them to the Windows desktop');
     hostDropHint.style.display = 'none';
     desktop.appendChild(hostDropHint);
     document.body.appendChild(desktop);

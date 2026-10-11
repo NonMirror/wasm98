@@ -3,7 +3,7 @@
  * Built-in images are shipped under web/games/ and loaded from the same local
  * wasm98 filesystem.  User images stay in the browser's memory for the life
  * of the VM.  The host file bridge is used only after the user presses the
- * picker button or an explicit drop; no host paths are scanned and no image is uploaded.
+ * picker button, pastes, or explicitly drops an image; no host paths are scanned and no image is uploaded.
  */
 (function () {
   'use strict';
@@ -196,15 +196,20 @@
     var drop = document.createElement('div');
     drop.className = 'w98-vm-drop';
     drop.style.cssText = 'border:1px dashed #555;background:#dfdfdf;text-align:center;padding:8px;color:#404040;';
-    drop.textContent = 'Drop a bootable image here';
+    drop.textContent = 'Drop or paste a bootable image here';
     var buttons = document.createElement('div');
     buttons.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:auto;';
     var open = document.createElement('button');
     open.className = 'default';
     open.textContent = '&Open image…';
+    var paste = document.createElement('button');
+    paste.textContent = 'Paste image…';
+    paste.title = 'Paste a disk image from the clipboard';
+    paste.setAttribute('aria-label', 'Paste disk image from clipboard');
     var close = document.createElement('button');
     close.textContent = 'Close';
     buttons.appendChild(open);
+    buttons.appendChild(paste);
     buttons.appendChild(close);
     root.appendChild(heading);
     root.appendChild(text);
@@ -220,6 +225,7 @@
 
     function setBusy(value) {
       open.disabled = value;
+      paste.disabled = value;
       builtinButtons.forEach(function (button) { button.disabled = value; });
       drop.style.opacity = value ? '0.65' : '1';
     }
@@ -266,6 +272,54 @@
       });
     }
 
+    function readClipboardImage(event) {
+      var b = bridge();
+      if (!b || typeof b.readClipboardFiles !== 'function') {
+        throw new Error('Clipboard file access is unavailable in this browser.');
+      }
+      return Promise.resolve(b.readClipboardFiles(event)).then(function (files) {
+        files = files || [];
+        var file = null;
+        for (var i = 0; i < files.length; i += 1) {
+          if (files[i] && isImageName(files[i].name)) { file = files[i]; break; }
+        }
+        if (!file) throw new Error('The clipboard does not contain a supported disk image.');
+        return readHostImage(file);
+      });
+    }
+
+    function pasteImage() {
+      if (paste.disabled) return;
+      setBusy(true);
+      status.textContent = 'Reading a disk image from the clipboard…';
+      Promise.resolve().then(function () { return readClipboardImage(); }).catch(showError).then(function () {
+        if (!win.closed) setBusy(false);
+      });
+    }
+
+    function pasteEvent(event) {
+      var b = bridge();
+      /* Ignore ordinary text paste.  A file item is handled below, including
+         browser Clipboard API fallbacks exposed by the host-file bridge. */
+      if (b && typeof b.isFilePaste === 'function' && !b.isFilePaste(event)) return;
+      if (!b || typeof b.readClipboardFiles !== 'function') return;
+      if (!b.isFilePaste) {
+        var data = event && event.clipboardData, hasFile = !!(data && data.files && data.files.length);
+        if (!hasFile && data && data.items) {
+          hasFile = Array.prototype.some.call(data.items, function (item) { return item && item.kind === 'file'; });
+        }
+        if (!hasFile) return;
+      }
+      event.preventDefault();
+      if (event.stopPropagation) event.stopPropagation();
+      if (paste.disabled) return;
+      setBusy(true);
+      status.textContent = 'Reading a disk image from the clipboard…';
+      Promise.resolve().then(function () { return readClipboardImage(event); }).catch(showError).then(function () {
+        if (!win.closed) setBusy(false);
+      });
+    }
+
     BUILTIN_IMAGES.forEach(function (entry, index) {
       var button = builtinButtons[index];
       button.addEventListener('click', function () {
@@ -301,6 +355,8 @@
         if (!win.closed) setBusy(false);
       });
     });
+    paste.addEventListener('click', pasteImage);
+    win.el.addEventListener('paste', pasteEvent);
 
     function dragLeave() {
       drop.classList.remove('w98-vm-drop-active');
@@ -338,6 +394,8 @@
       drop.removeEventListener('dragover', dragOver);
       drop.removeEventListener('dragleave', dragLeave);
       drop.removeEventListener('drop', dropImage);
+      paste.removeEventListener('click', pasteImage);
+      win.el.removeEventListener('paste', pasteEvent);
     } };
   }
 
