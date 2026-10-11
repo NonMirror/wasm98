@@ -53,6 +53,9 @@ assert.equal(x64.magic, 0x20b);
 assert.equal(x64.subsystemName, 'console');
 assert.equal(x64.entryRva, 0x1000);
 { const r = x64.run(); assert.equal(r.status, 'exited'); assert.equal(r.exitCode, 42); assert.equal(r.steps, 2); }
+const launched = PE.run(pe32Console(), { maxSteps: 16 });
+assert.equal(launched.status, 'exited'); assert.equal(launched.exitCode, 42);
+assert.equal(launched.arch, 'x86'); assert.equal(launched.subsystem, 'console');
 
 /* Imports are parsed by DLL and symbol, then filled through an explicit host
    resolver.  The test does not require a DOM: the callback is the ABI bridge
