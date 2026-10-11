@@ -16,7 +16,7 @@ Windows 98 in the browser. JS draws the pixels; the operating-system state (proc
 - **Windows 98 disk-image VM.** Open **Start → Programs → System Tools → Windows 98 Virtual Machine**, choose one of the built-in ISO images or a local bootable `.img`, `.ima`, `.vhd`, `.vhdx`, `.hdd`, `.raw`, or `.iso`, and run it in the bundled DOSBox-X WebAssembly build. Built-ins are served from `web/games/`; user images are read through the explicit host-file picker and are never uploaded.
 - **Diagnostics and system tools.** Kernel Lab (read-only, WinDbg-style), Hyper-V Manager, Virtual Machine Manager, Event Viewer, Performance Monitor, Device Manager (PnP model stored under `HKLM\...\Enum`), and boot recovery (Safe Mode, boot log, Startup Menu).
 - **Offline "networking".** Dial-Up Networking is a registry-backed state machine; intranet pages are served from the guest filesystem; Internet Explorer and Network Neighborhood consume the same model without touching any browser network primitive.
-- **Host file exchange.** Host files are read only after a user-initiated picker, and can be mounted as `A:` (floppy) or `D:` (CD-ROM). Ejecting bumps a generation number so stale references are detected.
+- **Host file exchange.** Host files are read only after a user-initiated picker or an explicit drag-and-drop. Drop files on the desktop to copy them to `C:\WINDOWS\Desktop`, use Explorer or File Transfer for another guest folder, or mount them as `A:` (floppy) or `D:` (CD-ROM). Ejecting bumps a generation number so stale references are detected.
 
 ## Technical challenges
 

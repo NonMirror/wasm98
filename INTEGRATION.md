@@ -45,8 +45,12 @@ opens the fixture pages from the virtual filesystem after Dial-Up connects.
 `host-file-bridge.js` exposes the explicit-selection `W98.hostFiles` boundary
 for import/export. `transfer.js` and `floppy.js` are Accessories/System Tools
 surfaces that open browser pickers only after the user chooses a file, folder,
-or image. `dialup.js` and `network-neighborhood.js` are Programs entries; the
-network adapter remains local and deterministic. No runtime network fetch is
+or image. The desktop also accepts a deliberate host file drop and copies the
+files to `C:\WINDOWS\Desktop`; Explorer and File Transfer keep their own drop
+targets for copying into a selected guest folder. A drop is accepted only when
+the browser supplies a `FileList`, and no host path is inferred or scanned.
+`dialup.js` and `network-neighborhood.js` are Programs entries; the network
+adapter remains local and deterministic. No runtime network fetch is
 introduced.
 
 ## Kernel lab and games
