@@ -330,9 +330,16 @@
   }
 
   function desktopDropTarget(event) {
-    /* A window or desktop icon may own its own drop target.  Restrict the
-       desktop importer to the blank holder so a file is copied only once. */
-    return !!(event && (event.target === holder || event.target === desktop));
+    /* A window may own its own drop target.  Everything else inside the
+       desktop holder, including an icon, belongs to the desktop background. */
+    var target = event && event.target;
+    if (!target) return false;
+    var inHolder = false;
+    for (var node = target; node && node !== desktop; node = node.parentNode) {
+      if (node.classList && node.classList.contains('w98-window')) return false;
+      if (node === holder) inHolder = true;
+    }
+    return target === desktop || inHolder;
   }
 
   function setHostDropHint(active, text) {
@@ -357,6 +364,19 @@
 
   function wireHostDrop() {
     if (!holder || !hostDropHint) return;
+    /* A browser navigates to a dropped file unless dragover/drop is canceled.
+       Install this capture-phase guard before any shell child can stop the
+       event.  App-specific handlers still receive the event and route it to
+       Explorer, File Transfer, the VM chooser, or the desktop importer. */
+    function browserDropGuard(ev) {
+      if (!hostFileDrop(ev)) return;
+      if (ev.type === 'dragover' || ev.type === 'drop') {
+        ev.preventDefault();
+        if (ev.type === 'dragover' && ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+      }
+    }
+    document.addEventListener('dragover', browserDropGuard, true);
+    document.addEventListener('drop', browserDropGuard, true);
     function dragenter(ev) {
       if (!hostFileDrop(ev) || !desktopDropTarget(ev)) return;
       ev.preventDefault();
