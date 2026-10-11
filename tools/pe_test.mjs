@@ -67,6 +67,7 @@ assert.equal(launched.arch, 'x86'); assert.equal(launched.subsystem, 'console');
    resolver.  The test does not require a DOM: the callback is the ABI bridge
    user32/gdi32 implementations use to provide host functions. */
 const calls = [];
+const rtForImports = Win32.createRuntime();
 const imported = parse(pe32WithUser32Import(), {
   resolveImport(dll, name) {
     calls.push([dll, name]);
@@ -80,6 +81,8 @@ assert.deepEqual(Array.from(calls), [['user32.dll', 'CreateWindowExA']]);
 assert.ok(imported.imports[0].address, 'resolved import receives an IAT address');
 assert.ok(imported.imports[0].host, 'resolved import retains host callback');
 assert.ok(Object.keys(imported.hostSlots).length === 1, 'one host callback slot allocated');
+const importedHost = parse(pe32WithUser32Import(), { resolveImport: (dll, name) => rtForImports.resolve(dll, name) });
+assert.equal(typeof importedHost.imports[0].host, 'function');
 
 /* A relocation entry is applied only when a non-preferred load base is used. */
 const r32 = parse(pe32WithRelocation());
