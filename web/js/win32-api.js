@@ -484,6 +484,18 @@
     getExports: function (dll) { return (TABLES[low(dll)] || []).slice(); },
     Runtime: Runtime
   };
-  API.user32 = TABLES.user32.slice(); API.gdi32 = TABLES.gdi32.slice(); API.kernel32 = TABLES.kernel32.slice();
+  function facade(dll) {
+    var names = TABLES[dll].slice();
+    names.names = names.slice();
+    names.resolve = function (name) { return API.resolve(dll, name); };
+    names.call = function (name, args) { return API.call(dll, name, args); };
+    names.forEach(function (name) {
+      names[name] = function () { return API.call(dll, name, Array.prototype.slice.call(arguments)); };
+    });
+    return names;
+  }
+  /* The facade is both an export-name list (useful to import binders) and a
+     callable table for tiny embedders that do not need an explicit runtime. */
+  API.user32 = facade('user32'); API.gdi32 = facade('gdi32'); API.kernel32 = facade('kernel32');
   global.W98Win32 = API;
 })(typeof window !== 'undefined' ? window : globalThis);
