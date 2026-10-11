@@ -49,6 +49,7 @@ tools/                        build scripts, tests, dev server
 node tools/kernel_test.mjs         # 478 kernel / NT ABI checks
 node tools/hv_test.mjs             # 417 Hyper-V / VBS / VT-x checks
 node tools/snapshot_test.mjs       # snapshot format checks
+node tools/pe_test.mjs              # PE32/PE32+ + headless user32/gdi32 checks
 python3 tools/serve.py -p 8098     # static server with COOP/COEP and no-store
 ./tools/build_w98_ctf_iso.sh      # rebuild web/games/w98-ctf.iso from its source
 ```
