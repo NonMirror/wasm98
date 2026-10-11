@@ -81,6 +81,15 @@ assert.deepEqual(Array.from(calls), [['user32.dll', 'CreateWindowExA']]);
 assert.ok(imported.imports[0].address, 'resolved import receives an IAT address');
 assert.ok(imported.imports[0].host, 'resolved import retains host callback');
 assert.ok(Object.keys(imported.hostSlots).length === 1, 'one host callback slot allocated');
+/* Execute a PE32 absolute-IAT call as well as merely parsing its import. */
+const importedCallBytes = pe32WithUser32Import();
+const importedCall = parse(importedCallBytes, { resolveImport(dll, name) {
+  return name === 'CreateWindowExA' ? function () { return 0; } : null;
+}});
+const iatVA = 0x00400000 + 0x2048;
+importedCall.image.set([0xff, 0x15, iatVA & 255, (iatVA >>> 8) & 255, (iatVA >>> 16) & 255, (iatVA >>> 24) & 255,
+  0xb8, 42, 0, 0, 0, 0xc3], 0x1000);
+assert.equal(importedCall.run({ maxSteps: 16 }).exitCode, 42, 'x86 absolute IAT call executes');
 const importedHost = parse(pe32WithUser32Import(), { resolveImport: (dll, name) => rtForImports.resolve(dll, name) });
 assert.equal(typeof importedHost.imports[0].host, 'function');
 

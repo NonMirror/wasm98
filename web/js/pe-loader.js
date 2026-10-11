@@ -112,7 +112,9 @@
     this.hasImports = this.imports.length > 0;
     this._parseExports();
     this._parseRelocations();
-    this.isStaticallyLinked = !this.imports.some(function (i) { return /^(msvcr|msvcp|ucrtbase|vcruntime|libgcc|libstdc\+\+)/i.test(i.dll); });
+    this.isStaticallyLinked = !this.imports.some(function (i) {
+      return /^(msvcr|msvcp|ucrtbase|vcruntime|api-ms-win-crt|libgcc|libstdc\+\+|mingw|cygwin|libwinpthread)/i.test(i.dll);
+    });
     this.entrypointOffset = this.rvaToOffset(this.entryRva, 1);
     if (o.resolveImport) this.resolveImports(o.resolveImport, o);
     if (o.loadBase != null && this.loadBase !== this.preferredBase) this.applyRelocations(this.loadBase);
@@ -238,7 +240,14 @@
   CPU.prototype.num = function (v) { return this.x64 ? (typeof v === 'bigint' ? v : BigInt(v)) : Number(v) >>> 0; };
   CPU.prototype.addr = function (v) { return typeof v === 'bigint' ? v : BigInt(v >>> 0); };
   CPU.prototype.reg = function (i) { return this.r[i] || (this.x64 ? 0n : 0); };
-  CPU.prototype.setReg = function (i, v) { this.r[i] = this.x64 ? (BigInt(v) & 0xffffffffffffffffn) : (Number(v) >>> 0); };
+  CPU.prototype.setReg = function (i, v) {
+    var q = this.x64 ? (BigInt(v) & 0xffffffffffffffffn) : (Number(v) >>> 0);
+    this.r[i] = q;
+    /* Keep the stack-pointer register and the interpreter's bounded stack
+       cursor in lockstep.  Compiler prologues adjust RSP with SUB/ADD, while
+       CALL/RET use `sp` directly for safe memory access. */
+    if (i === 4) this.sp = q;
+  };
   CPU.prototype.off = function (a, n) {
     var x = this.addr(a), ib = this.addr(this.image.loadBase), ie = ib + BigInt(this.image.image.length);
     if (x >= ib && x + BigInt(n) <= ie) return { b: this.image.image, p: Number(x - ib) };
@@ -257,6 +266,38 @@
   CPU.prototype.writeGuestBytes = function (a, bytes) {
     var x = this.off(a, bytes.length); if (!x) fail('MEMORY_FAULT', 'guest write outside image/stack');
     x.b.set(bytes, x.p);
+  };
+  CPU.prototype.allocGuest = function (n, alignBytes) {
+    n = Math.max(1, Number(n) || 1); alignBytes = alignBytes || 8;
+    if (this._hostAlloc == null) this._hostAlloc = this.x64 ? this.stackBase : this.stackBase;
+    var p = this.x64 ? (BigInt(this._hostAlloc) + BigInt(alignBytes - 1)) & ~BigInt(alignBytes - 1) : (this._hostAlloc + alignBytes - 1) & ~(alignBytes - 1);
+    var end = this.x64 ? p + BigInt(n) : p + n;
+    var limit = this.x64 ? this.sp - 1024n : this.sp - 1024;
+    if (end >= limit) fail('STACK_OVERFLOW', 'guest host allocation exhausted');
+    this._hostAlloc = end; return p;
+  };
+  CPU.prototype.callGuest = function (target, args) {
+    var savedR = this.r.slice(), savedRip = this.rip, savedSp = this.sp;
+    var savedFlags = { zf: this.flags.zf, sf: this.flags.sf, cf: this.flags.cf, of: this.flags.of };
+    var word = this.x64 ? 8 : 4, base = this.x64 ? BigInt(this.sp) - 0x200n : this.sp - 0x200;
+    try {
+      this.sp = base;
+      this.writePtr(this.sp, this.x64 ? 0n : 0);
+      this.setReg(4, this.sp);
+      if (this.x64) {
+        this.setReg(1, args[0] || 0); this.setReg(2, args[1] || 0);
+        this.setReg(8, args[2] || 0); this.setReg(9, args[3] || 0);
+      } else {
+        for (var i = args.length - 1; i >= 0; i--) this.writePtr(this.sp + word * (i + 1), args[i] || 0);
+      }
+      this.rip = target;
+      var limit = Math.min(this.maxSteps - this.steps, 100000), result = null;
+      for (var n = 0; n < limit; n++) { result = this.step(); if (result) break; }
+      return this.reg(0);
+    } finally {
+      this.r = savedR; this.rip = savedRip; this.sp = savedSp;
+      this.flags = savedFlags;
+    }
   };
   CPU.prototype.readGuestString = function (a, wide, max) {
     max = max || 32768; var out = '', i, c;
@@ -278,7 +319,14 @@
     var b = this.fetch8(), mod = b >>> 6, reg = ((b >>> 3) & 7) + (rex && rex.r ? 8 : 0), rm0 = (b & 7), rm = rm0 + (rex && rex.b ? 8 : 0), disp = 0, addr = null, base;
     if (mod === 3) return { reg: reg, rm: rm, direct: true };
     if (rm0 === 4) { var sib = this.fetch8(), ss = sib >>> 6, ix = ((sib >>> 3) & 7) + (rex && rex.x ? 8 : 0), bi0 = sib & 7, bi = bi0 + (rex && rex.b ? 8 : 0); if (!(mod === 0 && bi0 === 5)) base = this.reg(bi); else base = this.x64 ? 0n : 0; if (ix !== (rex && rex.x ? 8 : 4)) base = base + this.reg(ix) * (this.x64 ? (1n << BigInt(ss)) : Math.pow(2, ss)); if (mod === 1) disp = this.fetchS(1); else if (mod === 2) disp = this.fetchS(4); else if (bi0 === 5) disp = this.fetchS(4); addr = base + (this.x64 ? BigInt(disp) : disp); }
-    else if (mod === 0 && rm0 === 5) { disp = this.fetchS(4); addr = this.x64 ? this.rip + BigInt(disp) : this.image.loadBase + (disp >>> 0); }
+    else if (mod === 0 && rm0 === 5) {
+      disp = this.fetchS(4);
+      if (this.x64) addr = this.rip + BigInt(disp);
+      else {
+        var av = disp >>> 0, lb = this.image.loadBase >>> 0;
+        addr = (av >= lb && av < ((lb + this.image.image.length) >>> 0)) ? av : ((lb + av) >>> 0);
+      }
+    }
     else { addr = this.reg(rm); if (mod === 1) addr += this.x64 ? BigInt(this.fetchS(1)) : this.fetchS(1); else if (mod === 2) addr += this.x64 ? BigInt(this.fetchS(4)) : this.fetchS(4); }
     return { reg: reg, rm: rm, direct: false, addr: addr };
   };
@@ -289,38 +337,91 @@
     var h = this.hostSlots[String(address)], ret;
     if (!h) return false;
     var args = [], n = h.argCount || this.options.argCount || 8, i;
-    if (this.x64) { args.push(this.r[1], this.r[2], this.r[8], this.r[9]); } else { for (i = 0; i < n; i++) args.push(this.read(this.sp + (this.x64 ? BigInt(this.word) : this.word), this.word)); }
+    var complete = true;
+    if (this.x64) {
+      /* Microsoft x64 passes the first four integer arguments in RCX, RDX,
+         R8, and R9.  The caller also reserves the 32-byte home area, so the
+         fifth argument is at [RSP+28h] after the CALL has pushed its return
+         address.  Reading these slots is required for CreateWindowEx,
+         CreateFile, BitBlt, and other imports with more than four arguments.
+         Keep the private CPU argument out of the guest ABI. */
+      args.push(this.r[1], this.r[2], this.r[8], this.r[9]);
+      for (i = 4; i < n; i++) {
+        try { args.push(this.read(this.sp + BigInt(this.word * (i + 1)), this.word)); }
+        catch (e) { args.push(0n); complete = false; }
+      }
+    }
+    else {
+      for (i = 0; i < n; i++) {
+        try { args.push(this.read(this.sp + this.word * (i + 1), this.word)); }
+        catch (e) { args.push(0); complete = false; }
+      }
+    }
     /* The CPU is passed as a final, private argument.  Win32 adapters use it
        to read guest strings and write buffers; ordinary callbacks can simply
        ignore the extra value. */
     ret = h.fn.apply(null, args.concat([this]));
     this.setReg(0, ret == null ? 0 : ret);
+    if (this.terminated) return { status: 'exited', exitCode: this.terminatedCode == null ? Number(this.reg(0)) : this.terminatedCode };
     this.rip = this.pop();
-    if (!this.x64 && h.stackBytes) { this.sp += h.stackBytes; this.setReg(4, this.sp); }
+    if (!this.x64 && h.stackBytes && complete) { this.sp += h.stackBytes; this.setReg(4, this.sp); }
     return true;
   };
   CPU.prototype.step = function () {
-    var rex = null, op, m, a, b, out, imm, target;
+    var rex = null, op, m, a, b, out, imm, target, n;
     while (this.x64 && this.rip != null) { op = Number(this.read(this.rip, 1)); if (op >= 0x40 && op <= 0x4f) { this.rip++; rex = { w: !!(op & 8), r: !!(op & 4), x: !!(op & 2), b: !!(op & 1) }; } else break; }
     op = this.fetch8();
     if (op === 0x90) return null;
     if (op === 0xc3 || op === 0xc2) { target = this.pop(); if (op === 0xc2) this.sp += this.x64 ? BigInt(this.fetchS(2)) : this.fetchS(2); if (target === 0 || target === 0n) return { status: 'exited', exitCode: Number(this.reg(0) & (this.x64 ? 0xffffffffn : 0xffffffff)) }; this.rip = target; return null; }
     if (op === 0xf4) return { status: 'halted', exitCode: Number(this.reg(0)) };
     if (op === 0xcc || op === 0xcd) return { status: 'unsupported_instruction', opcode: op, rip: this.rip - (this.x64 ? 1n : 1) };
+    /* In 32-bit mode 40h..4Fh are INC/DEC register opcodes.  In 64-bit
+       mode the same byte range is consumed above as REX prefixes. */
+    if (!this.x64 && op >= 0x40 && op <= 0x4f) {
+      var ir = op & 7, old = this.reg(ir), carry = this.flags.cf;
+      out = op < 0x48 ? (old + 1) >>> 0 : (old - 1) >>> 0;
+      this.setReg(ir, out); this.flags.zf = out === 0; this.flags.sf = !!(out & 0x80000000);
+      this.flags.of = op < 0x48 ? old === 0x7fffffff : old === 0x80000000; this.flags.cf = carry;
+      return null;
+    }
     if (op >= 0x50 && op <= 0x57) { this.push(this.reg((op & 7) + (rex && rex.b ? 8 : 0))); return null; }
     if (op >= 0x58 && op <= 0x5f) { this.setReg((op & 7) + (rex && rex.b ? 8 : 0), this.pop()); return null; }
     if (op >= 0xb8 && op <= 0xbf) { var ri = (op & 7) + (rex && rex.b ? 8 : 0), sz = this.x64 && rex && rex.w ? 8 : 4; this.setReg(ri, this.fetchS(sz)); return null; }
     if (op === 0x68) { this.push(this.fetchS(4)); return null; }
     if (op === 0x6a) { this.push(this.fetchS(1)); return null; }
-    if (op === 0xe8 || op === 0xe9) { imm = this.fetchS(4); target = this.rip + (this.x64 ? BigInt(imm) : imm); if (op === 0xe8) { this.push(this.rip); if (this.hostCall(target)) return null; } this.rip = target; return null; }
-    if (op === 0xeb) { this.rip += this.x64 ? BigInt(this.fetchS(1)) : this.fetchS(1); return null; }
+    if (op === 0xe8 || op === 0xe9) { imm = this.fetchS(4); target = this.rip + (this.x64 ? BigInt(imm) : imm); if (op === 0xe8) { this.push(this.rip); var hr = this.hostCall(target); if (hr) return hr === true ? null : hr; } this.rip = target; return null; }
+    if (op === 0xeb) { imm = this.fetchS(1); this.rip += this.x64 ? BigInt(imm) : imm; return null; }
     if (op >= 0x70 && op <= 0x7f) { imm = this.fetchS(1); if (this.jcc(op & 15)) this.rip += this.x64 ? BigInt(imm) : imm; return null; }
-    if (op === 0x0f) { op = this.fetch8(); if (op >= 0x80 && op <= 0x8f) { imm = this.fetchS(4); if (this.jcc(op & 15)) this.rip += this.x64 ? BigInt(imm) : imm; return null; } return { status: 'unsupported_instruction', opcode: 0x0f00 | op, rip: this.rip - (this.x64 ? 2n : 2) }; }
-    if (op === 0x89 || op === 0x8b || op === 0x8d || op === 0x31 || op === 0x33 || op === 0x01 || op === 0x03 || op === 0x29 || op === 0x2b || op === 0x39 || op === 0x3b || op === 0x85) {
-      m = this.modrm(rex); var n = this.x64 && rex && rex.w ? 8 : 4; a = this.value(m, n); b = this.reg(m.reg); if (op === 0x89) this.store(m, b, n); else if (op === 0x8b || op === 0x8d) this.setReg(m.reg, op === 0x8d ? m.addr : a); else if (op === 0x31 || op === 0x33) { out = a ^ b; this.store(m, out, n); this.flags.zf = out === 0 || out === 0n; } else if (op === 0x01 || op === 0x03) { out = this.setArith(a, b, this.x64 ? BigInt(a) + BigInt(b) : (a + b), false); this.store(m, out, n); } else if (op === 0x29 || op === 0x2b) { out = this.setArith(a, b, this.x64 ? BigInt(a) - BigInt(b) : (a - b), true); this.store(m, out, n); } else if (op === 0x39 || op === 0x3b) this.setArith(a, b, this.x64 ? BigInt(a) - BigInt(b) : (a - b), true); else { out = a & b; this.flags.zf = out === 0 || out === 0n; } return null;
+    if (op === 0x0f) {
+      op = this.fetch8();
+      if (op >= 0x80 && op <= 0x8f) { imm = this.fetchS(4); if (this.jcc(op & 15)) this.rip += this.x64 ? BigInt(imm) : imm; return null; }
+      /* CMOVcc is common in clang's branchless return paths. */
+      if (op >= 0x40 && op <= 0x4f) { m = this.modrm(rex); if (this.jcc(op & 15)) this.setReg(m.reg, this.value(m, this.x64 && rex && rex.w ? 8 : 4)); return null; }
+      return { status: 'unsupported_instruction', opcode: 0x0f00 | op, rip: this.rip - (this.x64 ? 2n : 2) };
+    }
+    /* MOV r/m, immediate (C7/C6) and byte moves appear in compiler-generated
+       structure initialization and freestanding memcpy routines. */
+    if (op === 0xc7 || op === 0xc6) {
+      m = this.modrm(rex); n = op === 0xc6 ? 1 : (this.x64 && rex && rex.w ? 8 : 4);
+      if ((m.reg & 7) !== 0) return { status: 'unsupported_instruction', opcode: op, rip: this.rip - (this.x64 ? 2n : 2) };
+      imm = this.fetchS(op === 0xc6 ? 1 : 4); this.store(m, imm, n); return null;
+    }
+    if (op === 0x88 || op === 0x8a || op === 0x89 || op === 0x8b || op === 0x8d || op === 0x31 || op === 0x33 || op === 0x01 || op === 0x03 || op === 0x29 || op === 0x2b || op === 0x39 || op === 0x3b || op === 0x85) {
+      m = this.modrm(rex); n = (op === 0x88 || op === 0x8a) ? 1 : (this.x64 && rex && rex.w ? 8 : 4); a = this.value(m, n); b = this.reg(m.reg);
+      if (op === 0x88 || op === 0x89) this.store(m, b, n);
+      else if (op === 0x8a || op === 0x8b || op === 0x8d) {
+        if (op === 0x8d) this.setReg(m.reg, m.addr);
+        else if (n === 1) { var prior = this.reg(m.reg), mask8 = this.x64 ? ~255n : 0xffffff00; this.setReg(m.reg, (prior & mask8) | (this.x64 ? BigInt(a) : Number(a))); }
+        else this.setReg(m.reg, a);
+      } else if (op === 0x31 || op === 0x33) { out = a ^ b; this.store(m, out, n); this.flags.zf = out === 0 || out === 0n; }
+      else if (op === 0x01 || op === 0x03) { out = this.setArith(a, b, this.x64 ? BigInt(a) + BigInt(b) : (a + b), false); this.store(m, out, n); }
+      else if (op === 0x29 || op === 0x2b) { out = this.setArith(a, b, this.x64 ? BigInt(a) - BigInt(b) : (a - b), true); this.store(m, out, n); }
+      else if (op === 0x39 || op === 0x3b) this.setArith(a, b, this.x64 ? BigInt(a) - BigInt(b) : (a - b), true);
+      else { out = a & b; this.flags.zf = out === 0 || out === 0n; this.flags.sf = this.x64 ? !!(out & (1n << BigInt(n * 8 - 1))) : !!(out & (n === 1 ? 0x80 : 0x80000000)); }
+      return null;
     }
     if (op === 0x83 || op === 0x81) { m = this.modrm(rex); n = this.x64 && rex && rex.w ? 8 : 4; imm = this.fetchS(op === 0x83 ? 1 : 4); a = this.value(m, n); switch (m.reg & 7) { case 0: out = this.setArith(a, imm, this.x64 ? BigInt(a) + BigInt(imm) : a + imm, false); this.store(m, out, n); break; case 5: out = this.setArith(a, imm, this.x64 ? BigInt(a) - BigInt(imm) : a - imm, true); this.store(m, out, n); break; case 7: this.setArith(a, imm, this.x64 ? BigInt(a) - BigInt(imm) : a - imm, true); break; default: return { status: 'unsupported_instruction', opcode: op, rip: this.rip - (this.x64 ? 2n : 2) }; } return null; }
-    if (op === 0xff) { m = this.modrm(rex); switch (m.reg & 7) { case 2: target = this.value(m, this.word); this.push(this.rip); if (this.hostCall(target)) return null; this.rip = target; return null; case 4: this.rip = this.value(m, this.word); return null; case 6: this.push(this.value(m, this.word)); return null; default: break; } }
+    if (op === 0xff) { m = this.modrm(rex); switch (m.reg & 7) { case 2: target = this.value(m, this.word); this.push(this.rip); var hr2 = this.hostCall(target); if (hr2) return hr2 === true ? null : hr2; this.rip = target; return null; case 4: this.rip = this.value(m, this.word); return null; case 6: this.push(this.value(m, this.word)); return null; default: break; } }
     return { status: 'unsupported_instruction', opcode: op, rip: this.rip - (this.x64 ? 1n : 1) };
   };
   CPU.prototype.run = function () {
@@ -369,10 +470,12 @@
   }
   function run(input, options) {
     options = options || {};
-    var resolver = options.resolveImport || (options.runtime && typeof options.runtime.resolveImport === 'function' ? function (dll, name, ordinal, imp) {
-      return options.runtime.resolveImport(dll, name, ordinal, imp);
-    } : options.runtime && typeof options.runtime.resolve === 'function' ? function (dll, name, ordinal, imp) {
-      return options.runtime.resolve(dll, name, ordinal, imp);
+    var runtime = options.runtime || null, bridge = global.W98Win32 || (global.W98 && global.W98.Win32);
+    if (!runtime && !options.resolveImport && bridge && typeof bridge.createRuntime === 'function') runtime = bridge.createRuntime(options);
+    var resolver = options.resolveImport || (runtime && typeof runtime.resolveImport === 'function' ? function (dll, name, ordinal, imp) {
+      return runtime.resolveImport(dll, name, ordinal, imp);
+    } : runtime && typeof runtime.resolve === 'function' ? function (dll, name, ordinal, imp) {
+      return runtime.resolve(dll, name, ordinal, imp);
     } : defaultResolver);
     var image = input instanceof PEImage ? input : parse(input, {
       loadBase: options.loadBase,
@@ -384,6 +487,7 @@
     result.arch = image.arch; result.subsystem = image.subsystemName;
     result.console = image.isConsole; result.gui = image.isGui;
     result.staticallyLinked = image.isStaticallyLinked; result.image = image;
+    result.runtime = runtime || defaultRuntime || null;
     return result;
   }
   function runConsole(input, options) {

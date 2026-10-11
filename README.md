@@ -47,7 +47,7 @@ tools/                        build scripts, tests, dev server
 ./tools/build_kernel.sh            # -> web/wasm/kernel.wasm
 ./tools/build_hv.sh                # -> web/wasm/hypervisor.wasm
 node tools/kernel_test.mjs         # 478 kernel / NT ABI checks
-node tools/hv_test.mjs             # 417 Hyper-V / VBS / VT-x checks
+node tools/hv_test.mjs             # Hyper-V / VBS / VT-x checks
 node tools/snapshot_test.mjs       # snapshot format checks
 node tools/pe_test.mjs              # PE32/PE32+ + headless user32/gdi32 checks
 python3 tools/serve.py -p 8098     # static server with COOP/COEP and no-store

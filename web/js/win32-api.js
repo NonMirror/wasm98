@@ -106,10 +106,12 @@
     this._messages = [];
     this._files = Object.create(null);
     this._memory = Object.create(null);
+    this._guestAllocs = Object.create(null);
     this._console = { input: [], output: '', title: '' };
     this._commandLine = text(options.commandLine || '');
     this._env = options.environment || Object.create(null);
     this._defaultWindow = null;
+    this._cpu = null;             /* active PE interpreter, when present */
     this.constants = C;
     this.user32 = this._makeUser32();
     this.gdi32 = this._makeGdi32();
@@ -253,7 +255,14 @@
     var name = text(spec.lpszClassName || spec.className || spec.name);
     if (!name) return this._fail(C.ERROR_INVALID_PARAMETER);
     var atom = this._nextAtom++;
-    this._classes[name] = { name: name, wndProc: spec.lpfnWndProc || spec.wndProc || null, background: spec.hbrBackground || C.WHITE_BRUSH, atom: atom };
+    var proc = spec.lpfnWndProc || spec.wndProc || null;
+    if (typeof proc === 'number' || typeof proc === 'bigint') {
+      var address = proc, self = this;
+      proc = function (hwnd, message, wParam, lParam) {
+        return self._cpu && typeof self._cpu.callGuest === 'function' ? self._cpu.callGuest(address, [hwnd, message, wParam, lParam]) : 0;
+      };
+    }
+    this._classes[name] = { name: name, wndProc: proc, wndProcAddress: spec.lpfnWndProc || 0, background: spec.hbrBackground || C.WHITE_BRUSH, atom: atom };
     this._ok(); return atom;
   };
   Runtime.prototype.createWindow = function (ex, klass, title, style, x, y, width, height, parent, menu, instance, param) {
@@ -322,11 +331,10 @@
     k.GetTickCount = function () { return (Date.now() - now0) >>> 0; }; k.GetTickCount64 = k.GetTickCount;
     k.Sleep = function (ms) { r.virtualTime = (r.virtualTime || 0) + Math.max(0, asNumber(ms)); return 0; };
     k.QueryPerformanceCounter = function (out) { setOut(out, (Date.now() - now0) * 1000); return 1; }; k.QueryPerformanceFrequency = function (out) { setOut(out, 1000000); return 1; };
-    k.GetStdHandle = function (which) { return which === C.STD_INPUT_HANDLE ? C.STD_INPUT_HANDLE : which === C.STD_ERROR_HANDLE ? C.STD_ERROR_HANDLE : C.STD_OUTPUT_HANDLE; };
-    k.WriteConsoleA = function (h, value, n, written) { if (h !== C.STD_OUTPUT_HANDLE && h !== C.STD_ERROR_HANDLE) return r._fail(C.ERROR_INVALID_HANDLE); var s = text(value).slice(0, n == null ? undefined : asNumber(n)); r._console.output += s; setOut(written, s.length); return 1; }; k.WriteConsoleW = k.WriteConsoleA;
-    k.ReadConsoleA = function (h, out, n, read) { if (h !== C.STD_INPUT_HANDLE) return r._fail(C.ERROR_INVALID_HANDLE); var s = r._console.input.splice(0, 1).join('').slice(0, asNumber(n)); if (out && typeof out === 'object') out.value = s; setOut(read, s.length); return 1; }; k.ReadConsoleW = k.ReadConsoleA;
-    k.WriteFile = function (h, data, n, written) { if (h === C.STD_OUTPUT_HANDLE || h === C.STD_ERROR_HANDLE) return k.WriteConsoleA(h, data, n, written); var f = r._obj(h, 'file'); if (!f) return r._fail(C.ERROR_INVALID_HANDLE); var b = data instanceof Uint8Array ? data : new Uint8Array(data || []), len = n == null ? b.length : Math.min(b.length, asNumber(n)); f.bytes = f.bytes ? new Uint8Array(f.bytes) : new Uint8Array(0); var next = new Uint8Array(Math.max(f.bytes.length, f.pos + len)); next.set(f.bytes); next.set(b.subarray(0, len), f.pos); f.bytes = next; f.pos += len; setOut(written, len); return 1; };
-    k.ReadFile = function (h, out, n, read) { var f = r._obj(h, 'file'); if (!f) return r._fail(C.ERROR_INVALID_HANDLE); var len = Math.min(asNumber(n), Math.max(0, (f.bytes || new Uint8Array(0)).length - f.pos)); var b = (f.bytes || new Uint8Array(0)).subarray(f.pos, f.pos + len); if (out instanceof Uint8Array) out.set(b.subarray(0, out.length)); else if (out && typeof out === 'object') out.data = new Uint8Array(b); f.pos += len; setOut(read, len); return 1; };
+    k.GetStdHandle = function (which) { which = typeof which === 'bigint' ? Number(BigInt.asIntN(32, which)) : Number(which) | 0; return which === C.STD_INPUT_HANDLE ? C.STD_INPUT_HANDLE : which === C.STD_ERROR_HANDLE ? C.STD_ERROR_HANDLE : C.STD_OUTPUT_HANDLE; };
+    k.WriteConsoleA = function (h, value, n, written) { h = typeof h === 'bigint' ? Number(BigInt.asIntN(32, h)) : Number(h) | 0; if (h !== C.STD_OUTPUT_HANDLE && h !== C.STD_ERROR_HANDLE) return r._fail(C.ERROR_INVALID_HANDLE); var s = text(value).slice(0, n == null ? undefined : asNumber(n)); r._console.output += s; setOut(written, s.length); return 1; }; k.WriteConsoleW = k.WriteConsoleA;
+    k.ReadConsoleA = function (h, out, n, read) { h = typeof h === 'bigint' ? Number(BigInt.asIntN(32, h)) : Number(h) | 0; if (h !== C.STD_INPUT_HANDLE) return r._fail(C.ERROR_INVALID_HANDLE); var s = r._console.input.splice(0, 1).join('').slice(0, asNumber(n)); if (out && typeof out === 'object') out.value = s; setOut(read, s.length); return 1; }; k.ReadConsoleW = k.ReadConsoleA;
+    k.WriteFile = function (h, data, n, written) { h = typeof h === 'bigint' ? Number(BigInt.asIntN(32, h)) : Number(h) | 0; if (h === C.STD_OUTPUT_HANDLE || h === C.STD_ERROR_HANDLE) return k.WriteConsoleA(h, data, n, written); var f = r._obj(h, 'file'); if (!f) return r._fail(C.ERROR_INVALID_HANDLE); var b = data instanceof Uint8Array ? data : new Uint8Array(data || []), len = n == null ? b.length : Math.min(b.length, asNumber(n)); f.bytes = f.bytes ? new Uint8Array(f.bytes) : new Uint8Array(0); var next = new Uint8Array(Math.max(f.bytes.length, f.pos + len)); next.set(f.bytes); next.set(b.subarray(0, len), f.pos); f.bytes = next; f.pos += len; setOut(written, len); return 1; };
     k.CreateFileA = function (path, access, share, sec, create, flags, template) { var p = text(path), bytes = W98 && W98.fs && W98.fs.readBytes ? W98.fs.readBytes(p) : null; if (!bytes && create === 3 /* OPEN_EXISTING */) return r._fail(C.ERROR_FILE_NOT_FOUND); return r._handle('file', { path: p, bytes: bytes || new Uint8Array(0), pos: 0, access: access || 0 }); }; k.CreateFileW = k.CreateFileA;
     k.CloseHandle = function (h) { if (!r._objects[h]) return r._fail(C.ERROR_INVALID_HANDLE); r._drop(h); return 1; };
     k.SetFilePointer = function (h, dist, high, method) { var f = r._obj(h, 'file'); if (!f) return r._fail(C.ERROR_INVALID_HANDLE); var old = f.pos, m = method || 0; f.pos = m === 0 ? dist : m === 1 ? f.pos + dist : (f.bytes || []).length + dist; return old; };
@@ -334,7 +342,7 @@
     k.GetEnvironmentVariableA = function (name, out, n) { var s = text(r._env[text(name)] || ''); s = s.slice(0, Math.max(0, asNumber(n) - 1)); if (out && typeof out === 'object') out.value = s; return s.length; }; k.GetEnvironmentVariableW = k.GetEnvironmentVariableA;
     k.lstrlenA = function (s) { return text(s).length; }; k.lstrlenW = k.lstrlenA; k.lstrcmpA = function (a, b) { a = text(a); b = text(b); return a < b ? -1 : a > b ? 1 : 0; }; k.lstrcmpW = k.lstrcmpA;
     k.VirtualAlloc = function (addr, bytes) { var b = new Uint8Array(Math.max(1, asNumber(bytes))); return r._handle('memory', { bytes: b, size: b.length }); }; k.HeapAlloc = k.VirtualAlloc;
-    k.VirtualFree = function (h) { if (!r._obj(h, 'memory')) return r._fail(C.ERROR_INVALID_HANDLE); r._drop(h); return 1; }; k.HeapFree = k.VirtualFree;
+    k.VirtualFree = function (h) { if (r._guestAllocs[String(h)]) { delete r._guestAllocs[String(h)]; return 1; } if (!r._obj(h, 'memory')) return r._fail(C.ERROR_INVALID_HANDLE); r._drop(h); return 1; }; k.HeapFree = k.VirtualFree;
     k.ExitProcess = function (code) { r.exited = true; r.exitCode = asNumber(code); r.postMessage(0, C.WM_QUIT, r.exitCode, 0); return 0; };
     return k;
   };
@@ -362,60 +370,105 @@
     a[p + 2] = (n >>> 16) & 255; a[p + 3] = (n >>> 24) & 255;
   }
   function readU32(a, p) { return (a[p] | (a[p + 1] << 8) | (a[p + 2] << 16) | (a[p + 3] << 24)) >>> 0; }
+  function encodeGuestText(s, wide) {
+    s = text(s); var b = new Uint8Array((s.length + 1) * (wide ? 2 : 1)), i;
+    if (wide) for (i = 0; i < s.length; i++) { b[i * 2] = s.charCodeAt(i) & 255; b[i * 2 + 1] = s.charCodeAt(i) >>> 8; }
+    else for (i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 255;
+    return b;
+  }
   Runtime.prototype._importArgs = function (dll, name, args, ctx) {
     var n = text(name).replace(/@[0-9]+$/, ''), a = args.slice(), self = this;
     function outRect(ptr, r) { var b = new Uint8Array(16); writeU32(b, 0, r.left); writeU32(b, 4, r.top); writeU32(b, 8, r.right); writeU32(b, 12, r.bottom); writeGuestStruct(ctx, ptr, b); }
     function outCount(ptr, v) { var b = new Uint8Array(4); writeU32(b, 0, v); writeGuestStruct(ctx, ptr, b); }
-    if (/^RegisterClassEx/.test(n)) {
+    if (/^RegisterClass(?:Ex)?/.test(n)) {
       var p = guestPtr(ctx, a[0]), spec = { lpszClassName: '', lpfnWndProc: 0, hbrBackground: C.WHITE_BRUSH };
       if (p && ctx && typeof ctx.readPtr === 'function') {
         var step = ctx.word || (ctx.x64 ? 8 : 4), base = p;
         try {
-          spec.lpfnWndProc = ctx.readPtr(ctx.x64 ? BigInt(base) + BigInt(step * 2) : base + step * 2);
+          /* WNDCLASSEX keeps the callback immediately after cbSize/style;
+             the pointer is eight bytes wide on PE32+ but its field offset is
+             still 8 (not two pointer slots). */
+          spec.lpfnWndProc = ctx.readPtr(ctx.x64 ? BigInt(base) + 8n : base + 8);
           var clsOff = ctx.x64 ? 64 : 40;
           var clsPtr = ctx.readPtr(ctx.x64 ? BigInt(base) + BigInt(clsOff) : base + clsOff);
           spec.lpszClassName = guestString(ctx, clsPtr, /W$/.test(n));
           var brushOff = ctx.x64 ? 48 : 32;
-          spec.hbrBackground = ctx.read(ctx.x64 ? BigInt(base) + BigInt(brushOff) : base + brushOff, step);
+          spec.hbrBackground = asNumber(ctx.read(ctx.x64 ? BigInt(base) + BigInt(brushOff) : base + brushOff, step));
         } catch (e) {}
       }
       a[0] = spec;
     } else if (/^CreateWindowEx/.test(n)) { a[1] = guestString(ctx, a[1], /W$/.test(n)); a[2] = guestString(ctx, a[2], /W$/.test(n)); }
     else if (/^(SetWindowText|MessageBox)/.test(n)) { if (n.indexOf('MessageBox') === 0) { a[1] = guestString(ctx, a[1], /W$/.test(n)); a[2] = guestString(ctx, a[2], /W$/.test(n)); } else a[1] = guestString(ctx, a[1], /W$/.test(n)); }
-    else if (/^(GetWindowText|GetEnvironmentVariable)/.test(n)) { /* output buffers are filled below */ }
+    else if (/^GetEnvironmentVariable/.test(n)) { a[0] = guestString(ctx, a[0], /W$/.test(n)); /* output buffers are filled below */ }
+    else if (/^GetWindowText/.test(n)) { /* output buffers are filled below */ }
+    else if (/^(GetModuleHandle|LoadLibrary)/.test(n)) a[0] = guestString(ctx, a[0], /W$/.test(n));
+    else if (/^GetProcAddress/.test(n)) a[1] = guestString(ctx, a[1], false);
     else if (/^(TextOut|DrawText)/.test(n)) { a[3] = guestString(ctx, a[3], /W$/.test(n)); }
     else if (/^(CreateFont)/.test(n)) { a[a.length - 1] = guestString(ctx, a[a.length - 1], /W$/.test(n)); }
-    else if (/^WriteConsole/.test(n)) { a[1] = guestString(ctx, a[1], /W$/.test(n)); }
-    else if (/^ReadConsole/.test(n)) { /* pointer buffers handled below */ }
+    else if (/^WriteConsole/.test(n)) { a[1] = guestString(ctx, a[1], /W$/.test(n)); a[3] = {}; }
+    else if (/^ReadConsole/.test(n)) { a[1] = {}; a[3] = {}; }
     else if (/^CreateFile/.test(n)) a[0] = guestString(ctx, a[0], /W$/.test(n));
     else if (/^WriteFile/.test(n)) {
       if (ctx && typeof ctx.readGuestBytes === 'function') { try { a[1] = ctx.readGuestBytes(guestPtr(ctx, a[1]), Number(a[2]) || 0); } catch (e) { a[1] = new Uint8Array(0); } }
+      a[3] = {};
     }
+    else if (/^ReadFile/.test(n)) { a[1] = {}; a[3] = {}; }
     else if (/^(lstrlen|lstrcmp)/.test(n)) { a[0] = guestString(ctx, a[0], /W$/.test(n)); if (n.indexOf('lstrcmp') === 0) a[1] = guestString(ctx, a[1], /W$/.test(n)); }
     else if (/^GetMessage|^PeekMessage/.test(n)) { a[0] = {}; }
     else if (/^Get(Client|Window)Rect/.test(n)) { a[1] = {}; }
     else if (/^BeginPaint/.test(n)) { a[1] = {}; }
     else if (/^TextOut/.test(n)) { a[3] = guestString(ctx, a[3], /W$/.test(n)); }
     else if (/^FillRect/.test(n)) { a[1] = {}; }
+    else if (/^MoveToEx/.test(n)) { a[3] = {}; }
+    /* Guest pointers are BigInts for PE32+; host handles and scalar Win32
+       arguments are ordinary JavaScript numbers.  Pointer arguments that
+       need guest-memory access were saved in `args` and/or replaced above,
+       so normalizing the call copy here is safe. */
+    for (var ai = 0; ai < a.length; ai++) if (typeof a[ai] === 'bigint') a[ai] = Number(BigInt.asIntN(32, a[ai]));
     var ret = { args: a, after: function (value) {
+      if (/^GetCommandLine/.test(n) && ctx && typeof ctx.allocGuest === 'function') {
+        var cmd = String(value || ''), cb = encodeGuestText(cmd, /W$/.test(n));
+        var cp = ctx.allocGuest(cb.length, /W$/.test(n) ? 2 : 1); writeGuestStruct(ctx, cp, cb); return cp;
+      }
+      if (/^(VirtualAlloc|HeapAlloc)$/.test(n) && ctx && typeof ctx.allocGuest === 'function') {
+        var requested = n === 'VirtualAlloc' ? Number(args[1]) : Number(args[2]);
+        var gp = ctx.allocGuest(Math.max(1, requested || 1), 16);
+        self._guestAllocs[String(gp)] = { address: gp, size: Math.max(1, requested || 1), cpu: ctx };
+        try { ctx.writeGuestBytes(gp, new Uint8Array(Math.max(1, requested || 1))); } catch (e) {}
+        return gp;
+      }
+      if (/^GetEnvironmentVariable/.test(n)) {
+        /* The host API returns the required character count.  Recover the
+           actual value from the runtime environment for the guest buffer. */
+        var ev = text(self._env[text(a[0])] || ''), cap = Number(args[2]) || 0, ew = /W$/.test(n), eb = encodeGuestText(ev.slice(0, Math.max(0, cap - 1)), ew);
+        if (args[1]) writeGuestStruct(ctx, args[1], eb); return ew ? Math.max(0, eb.length / 2 - 1) : Math.max(0, eb.length - 1);
+      }
       if (/^GetMessage|^PeekMessage/.test(n)) {
         var m = a[0], ptr = args[0], b = new Uint8Array(24); writeU32(b, 0, m.hwnd); writeU32(b, 4, m.message); writeU32(b, 8, m.wParam); writeU32(b, 12, m.lParam); writeU32(b, 16, m.time || 0); writeGuestStruct(ctx, ptr, b);
       } else if (/^Get(Client|Window)Rect/.test(n)) outRect(args[1], a[1]);
       else if (/^BeginPaint/.test(n)) { var ps = a[1], b2 = new Uint8Array(72); writeU32(b2, 0, ps.hdc || value); writeU32(b2, 4, ps.fErase || 0); writeU32(b2, 8, 0); writeU32(b2, 12, 0); writeU32(b2, 16, ps.rcPaint ? ps.rcPaint.right : 0); writeU32(b2, 20, ps.rcPaint ? ps.rcPaint.bottom : 0); writeGuestStruct(ctx, args[1], b2); }
-      else if (/^GetWindowText/.test(n)) { var s = self._windows[args[0]] ? self._windows[args[0]].title : ''; if (ctx && args[1]) { var bytes = new Uint8Array(s.length + 1); for (var i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i); writeGuestStruct(ctx, args[1], bytes); } }
-      else if (/^WriteConsole|^WriteFile/.test(n)) { if (args[3]) outCount(args[3], value && value.written != null ? value.written : (typeof value === 'number' ? value : 0)); }
-      else if (/^ReadConsole/.test(n) && args[1] && ctx && typeof ctx.writeGuestBytes === 'function') { var inp = self._console.input.join('').slice(0, Number(args[2]) || 0), bb = new Uint8Array(inp.length); for (var j = 0; j < inp.length; j++) bb[j] = inp.charCodeAt(j); writeGuestStruct(ctx, args[1], bb); outCount(args[3], bb.length); }
+      else if (/^GetWindowText/.test(n)) { var s = self._windows[args[0]] ? self._windows[args[0]].title : '', capText = Number(args[2]) || 0; if (capText > 0) s = s.slice(0, Math.max(0, capText - 1)); if (ctx && args[1]) writeGuestStruct(ctx, args[1], encodeGuestText(s, /W$/.test(n))); }
+      else if (/^WriteConsole|^WriteFile/.test(n)) { if (args[3]) outCount(args[3], a[3] && a[3].value != null ? a[3].value : (value && value.written != null ? value.written : 0)); }
+      else if (/^ReadConsole/.test(n) && args[1] && ctx && typeof ctx.writeGuestBytes === 'function') { var inp = self._console.input.join('').slice(0, Number(args[2]) || 0), bb = encodeGuestText(inp, /W$/.test(n)); writeGuestStruct(ctx, args[1], bb); outCount(args[3], a[3] && a[3].value != null ? a[3].value : inp.length); }
+      else if (/^ReadFile/.test(n) && args[1] && ctx && typeof ctx.writeGuestBytes === 'function') { var rb = a[1] && a[1].data ? a[1].data : new Uint8Array(0); writeGuestStruct(ctx, args[1], rb); outCount(args[3], a[3] && a[3].value != null ? a[3].value : rb.length); }
+      else if (/^MoveToEx/.test(n) && args[3]) { var old = a[3] || {}; var ob = new Uint8Array(8); writeU32(ob, 0, old.x || 0); writeU32(ob, 4, old.y || 0); writeGuestStruct(ctx, args[3], ob); }
       return value;
     }};
     return ret;
   };
   Runtime.prototype.resolveImport = function (dll, name, ordinal) {
     var fn = this.resolve(dll, name || ('#' + ordinal)); if (!fn) return null;
-    var n = text(name), argc = SIGNATURES[n] ? SIGNATURES[n].length : (/^(GetStdHandle|GetLastError|GetTickCount|Sleep|ExitProcess|ShowWindow|UpdateWindow|GetDC|ReleaseDC|EndPaint|PostQuitMessage|DefWindowProc|DispatchMessage|TranslateMessage)$/.test(n) ? 4 : 8);
+    /* Import libraries may spell x86 stdcall names as _Foo@N.  Use the same
+       canonical name for marshalling and signature lookup that `resolve`
+       uses for the host export table. */
+    var n = text(name).replace(/^_/, '').replace(/@[0-9]+$/, ''), argc = SIGNATURES[n] ? SIGNATURES[n].length : (/^(GetStdHandle|GetLastError|GetTickCount|Sleep|ExitProcess|ShowWindow|UpdateWindow|GetDC|ReleaseDC|EndPaint|PostQuitMessage|DefWindowProc|DispatchMessage|TranslateMessage)$/.test(n) ? 4 : 8);
     var self = this;
     return { argCount: argc, stackBytes: argc * 4, fn: function () {
       var raw = Array.prototype.slice.call(arguments), ctx = raw.pop(), m = self._importArgs(dll, n, raw, ctx), value;
-      value = fn.apply(self, m.args); return m.after(value);
+      self._cpu = ctx || self._cpu;
+      value = fn.apply(self, m.args); value = m.after(value);
+      if (ctx && self.exited) { ctx.terminated = true; ctx.terminatedCode = self.exitCode; }
+      return value;
     }};
   };
   Runtime.prototype.call = function (dll, name, args) { var fn = this.resolve(dll, name); if (!fn) { this._fail(C.ERROR_PROC_NOT_FOUND); return 0; } try { this._ok(); return fn.apply(this, Array.isArray(args) ? args : []); } catch (e) { this._fail(C.ERROR_INVALID_PARAMETER); return 0; } };
@@ -429,13 +482,37 @@
     kernel32: ['GetLastError','SetLastError','GetModuleHandleA','GetModuleHandleW','LoadLibraryA','LoadLibraryW','GetProcAddress','GetTickCount','GetTickCount64','Sleep','QueryPerformanceCounter','QueryPerformanceFrequency','GetStdHandle','WriteConsoleA','WriteConsoleW','ReadConsoleA','ReadConsoleW','WriteFile','ReadFile','CreateFileA','CreateFileW','CloseHandle','SetFilePointer','GetCommandLineA','GetCommandLineW','GetEnvironmentVariableA','GetEnvironmentVariableW','lstrlenA','lstrlenW','lstrcmpA','lstrcmpW','VirtualAlloc','VirtualFree','HeapAlloc','HeapFree','ExitProcess']
   };
   var SIGNATURES = {
+    RegisterClassExA: ['spec'], RegisterClassExW: ['spec'], RegisterClassA: ['spec'], RegisterClassW: ['spec'], UnregisterClassA: ['className','instance'], UnregisterClassW: ['className','instance'],
     CreateWindowExA: ['exStyle','className','title','style','x','y','width','height','parent','menu','instance','param'],
     CreateWindowExW: ['exStyle','className','title','style','x','y','width','height','parent','menu','instance','param'],
+    DestroyWindow: ['hwnd'], ShowWindow: ['hwnd','command'], UpdateWindow: ['hwnd'],
     GetMessageA: ['message','hwnd','minFilter','maxFilter'], GetMessageW: ['message','hwnd','minFilter','maxFilter'],
     PeekMessageA: ['message','hwnd','minFilter','maxFilter','remove'], PeekMessageW: ['message','hwnd','minFilter','maxFilter','remove'],
+    TranslateMessage: ['message'], DispatchMessageA: ['message'], DispatchMessageW: ['message'],
+    DefWindowProcA: ['hwnd','message','wParam','lParam'], DefWindowProcW: ['hwnd','message','wParam','lParam'],
+    PostMessageA: ['hwnd','message','wParam','lParam'], PostMessageW: ['hwnd','message','wParam','lParam'],
+    SendMessageA: ['hwnd','message','wParam','lParam'], SendMessageW: ['hwnd','message','wParam','lParam'],
+    PostQuitMessage: ['exitCode'], SetWindowTextA: ['hwnd','text'], SetWindowTextW: ['hwnd','text'],
+    GetWindowTextA: ['hwnd','text','capacity'], GetWindowTextW: ['hwnd','text','capacity'],
+    GetWindowTextLengthA: ['hwnd'], GetWindowTextLengthW: ['hwnd'], GetClientRect: ['hwnd','rect'], GetWindowRect: ['hwnd','rect'],
+    GetDC: ['hwnd'], GetWindowDC: ['hwnd'], ReleaseDC: ['hwnd','hdc'], BeginPaint: ['hwnd','paint'], EndPaint: ['hwnd','paint'],
+    InvalidateRect: ['hwnd','rect','erase'], ValidateRect: ['hwnd','rect'], MessageBoxA: ['hwnd','text','caption','type'], MessageBoxW: ['hwnd','text','caption','type'],
+    GetForegroundWindow: [], SetForegroundWindow: ['hwnd'], GetSystemMetrics: ['index'],
+    CreateCompatibleDC: ['hdc'], DeleteDC: ['hdc'], CreateCompatibleBitmap: ['hdc','width','height'], CreateBitmap: ['width','height','planes','bits','data'],
+    DeleteObject: ['object'], SelectObject: ['hdc','object'], CreateSolidBrush: ['color'], CreateHatchBrush: ['style','color'], CreatePen: ['style','width','color'],
+    CreateFontA: ['height','width','escapement','orientation','weight','italic','underline','strike','charset','outPrecision','clipPrecision','quality','pitch','face'],
+    CreateFontW: ['height','width','escapement','orientation','weight','italic','underline','strike','charset','outPrecision','clipPrecision','quality','pitch','face'],
+    GetStockObject: ['object'], SetPixel: ['hdc','x','y','color'], GetPixel: ['hdc','x','y'], MoveToEx: ['hdc','x','y','point'], LineTo: ['hdc','x','y'],
+    FillRect: ['hdc','rect','brush'], PatBlt: ['hdc','x','y','width','height','rop'], Rectangle: ['hdc','left','top','right','bottom'],
+    GetDeviceCaps: ['hdc','index'],
     BitBlt: ['destDC','x','y','width','height','srcDC','srcX','srcY','rop'],
     TextOutA: ['dc','x','y','text'], TextOutW: ['dc','x','y','text'], FillRect: ['dc','rect','brush'],
-    WriteFile: ['handle','buffer','bytes','written'], ReadFile: ['handle','buffer','bytes','read']
+    GetLastError: [], SetLastError: ['error'], GetModuleHandleA: ['name'], GetModuleHandleW: ['name'], LoadLibraryA: ['name'], LoadLibraryW: ['name'], GetProcAddress: ['module','name'],
+    GetTickCount: [], GetTickCount64: [], Sleep: ['milliseconds'], QueryPerformanceCounter: ['value'], QueryPerformanceFrequency: ['value'], GetStdHandle: ['which'],
+    WriteConsoleA: ['handle','buffer','chars','written'], WriteConsoleW: ['handle','buffer','chars','written'], ReadConsoleA: ['handle','buffer','chars','read'], ReadConsoleW: ['handle','buffer','chars','read'],
+    WriteFile: ['handle','buffer','bytes','written'], ReadFile: ['handle','buffer','bytes','read'], CreateFileA: ['path','access','share','security','creation','flags','template'], CreateFileW: ['path','access','share','security','creation','flags','template'],
+    CloseHandle: ['handle'], SetFilePointer: ['handle','distance','high','method'], GetCommandLineA: [], GetCommandLineW: [], GetEnvironmentVariableA: ['name','buffer','capacity'], GetEnvironmentVariableW: ['name','buffer','capacity'],
+    lstrlenA: ['string'], lstrlenW: ['string'], lstrcmpA: ['a','b'], lstrcmpW: ['a','b'], VirtualAlloc: ['address','bytes','type','protect'], VirtualFree: ['address','bytes','type'], HeapAlloc: ['heap','flags','bytes'], HeapFree: ['heap','flags','address'], ExitProcess: ['code']
   };
   var API = {
     version: '1.0', constants: C, tables: TABLES, signatures: SIGNATURES,
@@ -458,8 +535,12 @@
       return runtime.resolveImport(dll, name, ordinal, imp);
     },
     presentResult: function (path, result, options) {
-      var runtime = API._default;
+      var runtime = (result && result.runtime) || API._default;
       if (!runtime || !result) return result;
+      if (result.status !== 'exited' && result.status !== 'halted') {
+        API.reportError(path, { code: result.status, message: result.message || result.status });
+        return result;
+      }
       /* GUI processes paint directly into their W98 shell window. Console
          processes get the same small modal surface used by the built-in
          command tools, with their captured WriteConsole output preserved. */
@@ -498,4 +579,5 @@
      callable table for tiny embedders that do not need an explicit runtime. */
   API.user32 = facade('user32'); API.gdi32 = facade('gdi32'); API.kernel32 = facade('kernel32');
   global.W98Win32 = API;
+  if (global.W98) global.W98.Win32 = API;
 })(typeof window !== 'undefined' ? window : globalThis);

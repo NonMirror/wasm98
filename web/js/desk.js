@@ -164,7 +164,11 @@
     else if (ext === 'wav' || ext === 'mp3' || ext === 'mid') W98.launch('mplayer', { path: full });
     else if (ext === 'htm' || ext === 'html' || ext === 'url') W98.launch('ie', { path: full });
     else if (ext === 'scr') W98.launch('display', { tab: 3 });
-    else if (ext === 'exe' || ext === 'com') W98.dialog.alert('Windows', 'Cannot run ' + p + '.\nThis file is not a valid Windows application.', 'error');
+    else if (ext === 'exe' || ext === 'com') {
+      if (!(W98.PE && typeof W98.PE.openPath === 'function' && W98.PE.openPath(full))) {
+        W98.dialog.alert('Windows', 'Cannot run ' + p + '.\nThis file is not a valid Windows application.', 'error');
+      }
+    }
     else W98.launch('notepad', { path: full });
   }
 

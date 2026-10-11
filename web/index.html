@@ -19,6 +19,11 @@
 <script src="js/kernel.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/shell.js"></script>
+<!-- The PE/Win32 layer is deliberately loaded after the shell: user32 owns
+     native-looking windows while the loader itself remains usable headlessly
+     in Node and in the kernel smoke tests. -->
+<script src="js/win32-api.js"></script>
+<script src="js/pe-loader.js"></script>
 <script src="js/hv.js"></script>
 <script src="js/snapshot.js"></script>
 <script src="js/devices.js"></script>

@@ -107,7 +107,9 @@
       else if (e === 'wav' || e === 'mid' || e === 'mp3' || e === 'avi') W98.launch('mplayer', { path: p });
       else if (e === 'htm' || e === 'html' || e === 'url') W98.launch('ie', { path: p });
       else if (e === 'exe' || e === 'com') {
-        W98.dialog.alert('Windows', 'Cannot run \'' + baseName(p) + '\'.\nThis file is not a valid Windows application.', 'error');
+        if (!(W98.PE && typeof W98.PE.openPath === 'function' && W98.PE.openPath(p))) {
+          W98.dialog.alert('Windows', 'Cannot run \'' + baseName(p) + '\'.\nThis file is not a valid Windows application.', 'error');
+        }
       } else W98.launch('notepad', { path: p });
     } catch (err) { /* never throw out of a click handler */ }
   }
