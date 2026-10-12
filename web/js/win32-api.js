@@ -117,7 +117,7 @@
     this.gdi32 = this._makeGdi32();
     this.kernel32 = this._makeKernel32();
     this.exports = { user32: this.user32, gdi32: this.gdi32, kernel32: this.kernel32 };
-    this.modules = { kernel32: 1, user32: 2, gdi32: 3, advapi32: 4, msvcrt: 5 };
+    this.modules = { kernel32: 1, user32: 2, gdi32: 3, advapi32: 4, msvcrt: 5, ucrtbase: 6, vcruntime140: 7 };
   }
 
   Runtime.prototype._fail = function (code) { this.lastError = code; return 0; };
@@ -325,9 +325,20 @@
   Runtime.prototype._makeKernel32 = function () {
     var r = this, k = {};
     k.GetLastError = function () { return r.lastError >>> 0; }; k.SetLastError = function (e) { r.lastError = e >>> 0; };
+    /* The MinGW CRT uses these kernel32 entry points during process startup.
+       The browser runner is single threaded, so critical sections and TLS
+       can be represented by stable no-op values while preserving the ABI. */
+    k.InitializeCriticalSection = function (p) { return 0; };
+    k.EnterCriticalSection = function () { return 0; };
+    k.LeaveCriticalSection = function () { return 0; };
+    k.DeleteCriticalSection = function () { return 0; };
+    k.TlsGetValue = function () { return 0; };
+    k.SetUnhandledExceptionFilter = function (fn) { var old = r._exceptionFilter || 0; r._exceptionFilter = fn || 0; return old; };
+    k.VirtualProtect = function (address, size, protect, oldProtect) { setOut(oldProtect, C.PAGE_READWRITE); return 1; };
+    k.VirtualQuery = function (address, info, length) { if (!info || typeof info !== 'object') return 0; info.BaseAddress = address || 0; info.AllocationBase = address || 0; info.RegionSize = asNumber(length); info.State = C.MEM_COMMIT; info.Protect = C.PAGE_READWRITE; info.Type = 0x20000; return 1; };
     k.GetModuleHandleA = function () { return 1; }; k.GetModuleHandleW = k.GetModuleHandleA;
     k.LoadLibraryA = function (name) { var n = low(name); if (!r.modules[n]) r.modules[n] = r._handle('module', n); return r.modules[n]; }; k.LoadLibraryW = k.LoadLibraryA;
-    k.GetProcAddress = function (mod, name) { var n = text(name).replace(/^_/, '').replace(/@\d+$/, ''), dll = ''; for (var x in r.modules) if (r.modules[x] === mod) dll = x; var fn = r.resolve(dll, n); if (!fn) return r._fail(C.ERROR_PROC_NOT_FOUND); return fn; };
+    k.GetProcAddress = function (mod, name) { var raw = text(name).replace(/@\d+$/, ''), n = raw.charAt(0) === '_' && raw.charAt(1) !== '_' ? raw.slice(1) : raw, dll = ''; for (var x in r.modules) if (r.modules[x] === mod) dll = x; var fn = r.resolve(dll, n); if (!fn) return r._fail(C.ERROR_PROC_NOT_FOUND); return fn; };
     k.GetTickCount = function () { return (Date.now() - now0) >>> 0; }; k.GetTickCount64 = k.GetTickCount;
     k.Sleep = function (ms) { r.virtualTime = (r.virtualTime || 0) + Math.max(0, asNumber(ms)); return 0; };
     k.QueryPerformanceCounter = function (out) { setOut(out, (Date.now() - now0) * 1000); return 1; }; k.QueryPerformanceFrequency = function (out) { setOut(out, 1000000); return 1; };
@@ -341,6 +352,20 @@
     k.GetCommandLineA = function () { return r._commandLine; }; k.GetCommandLineW = k.GetCommandLineA;
     k.GetEnvironmentVariableA = function (name, out, n) { var s = text(r._env[text(name)] || ''); s = s.slice(0, Math.max(0, asNumber(n) - 1)); if (out && typeof out === 'object') out.value = s; return s.length; }; k.GetEnvironmentVariableW = k.GetEnvironmentVariableA;
     k.lstrlenA = function (s) { return text(s).length; }; k.lstrlenW = k.lstrlenA; k.lstrcmpA = function (a, b) { a = text(a); b = text(b); return a < b ? -1 : a > b ? 1 : 0; }; k.lstrcmpW = k.lstrcmpA;
+    /* UCRT/API-set functions are supplied here as deterministic CRT shims.
+       Pointer arguments are decoded and copied by _importArgs below. */
+    k.__p__environ = function () { return 0; }; k.__p___argc = function () { return 0; }; k.__p___argv = function () { return 0; };
+    k._set_new_mode = function () { return 0; }; k._configthreadlocale = function () { return 0; }; k.__setusermatherr = function () { return 0; };
+    k.__C_specific_handler = function () { return 0; }; k._cexit = function () { return 0; }; k._configure_narrow_argv = function () { return 0; };
+    k._crt_atexit = function () { return 0; }; k._exit = function (code) { return k.ExitProcess(code); };
+    k._initialize_narrow_environment = function () { return 0; }; k._initterm = function () { return 0; }; k._initterm_e = function () { return 0; };
+    k._set_app_type = function () { return 0; }; k._set_invalid_parameter_handler = function () { return 0; }; k.abort = function () { return k.ExitProcess(3); };
+    k.exit = function (code) { return k.ExitProcess(code); }; k.signal = function () { return 0; };
+    k.__acrt_iob_func = function (which) { return asNumber(which); }; k.__p__commode = function () { return 0; }; k.__p__fmode = function () { return 0; };
+    k.__stdio_common_vfprintf = function () { return 0; }; k.fflush = function () { return 0; }; k.setvbuf = function () { return 0; };
+    k.puts = function (s) { r._console.output += text(s) + '\n'; return 0; }; k.strlen = function (s) { return text(s).length; };
+    k.strncmp = function (a, b, n) { a = text(a).slice(0, asNumber(n)); b = text(b).slice(0, asNumber(n)); return a < b ? -1 : a > b ? 1 : 0; };
+    k.malloc = function () { return 0; }; k.calloc = function () { return 0; }; k.free = function () { return 0; }; k.memcpy = function (dst) { return dst; };
     k.VirtualAlloc = function (addr, bytes) { var b = new Uint8Array(Math.max(1, asNumber(bytes))); return r._handle('memory', { bytes: b, size: b.length }); }; k.HeapAlloc = k.VirtualAlloc;
     k.VirtualFree = function (h) { if (r._guestAllocs[String(h)]) { delete r._guestAllocs[String(h)]; return 1; } if (!r._obj(h, 'memory')) return r._fail(C.ERROR_INVALID_HANDLE); r._drop(h); return 1; }; k.HeapFree = k.VirtualFree;
     k.ExitProcess = function (code) { r.exited = true; r.exitCode = asNumber(code); r.postMessage(0, C.WM_QUIT, r.exitCode, 0); return 0; };
@@ -348,9 +373,11 @@
   };
 
   Runtime.prototype.resolve = function (dll, name) {
-    var d = low(dll), n = text(name).replace(/^_/, '').replace(/@\d+$/, '');
-    var table = d === 'user32' ? this.user32 : d === 'gdi32' ? this.gdi32 : (d === 'kernel32' || d === 'advapi32' || d === 'msvcrt' ? this.kernel32 : null);
-    return table && (table[n] || table[n.replace(/A$/, 'W')] || table[n.replace(/W$/, 'A')]) || null;
+    var d = low(dll), raw = text(name).replace(/@\d+$/, ''), n = raw.replace(/^_/, '');
+    var isApiSet = /^api-ms-win-(?:crt|core|base)-/i.test(d), table = d === 'user32' ? this.user32 : d === 'gdi32' ? this.gdi32 : (d === 'kernel32' || d === 'advapi32' || d === 'msvcrt' || d === 'ucrtbase' || d === 'vcruntime140' || isApiSet ? this.kernel32 : null);
+    if (!table) return null;
+    return table[raw] || table[n] || table[raw.replace(/A$/, 'W')] || table[raw.replace(/W$/, 'A')] ||
+      table[n.replace(/A$/, 'W')] || table[n.replace(/W$/, 'A')] || null;
   };
   function guestPtr(ctx, value) {
     return value == null ? 0 : (typeof value === 'bigint' ? value : Number(value));
@@ -413,7 +440,12 @@
       a[3] = {};
     }
     else if (/^ReadFile/.test(n)) { a[1] = {}; a[3] = {}; }
-    else if (/^(lstrlen|lstrcmp)/.test(n)) { a[0] = guestString(ctx, a[0], /W$/.test(n)); if (n.indexOf('lstrcmp') === 0) a[1] = guestString(ctx, a[1], /W$/.test(n)); }
+    else if (/^VirtualProtect/.test(n)) { a[3] = {}; }
+    else if (/^VirtualQuery/.test(n)) { a[1] = {}; }
+    else if (/^(lstrlen|lstrcmp|strlen|strncmp|puts)$/.test(n)) { a[0] = guestString(ctx, a[0], /W$/.test(n)); if (/^(lstrcmp|strncmp)$/.test(n)) a[1] = guestString(ctx, a[1], /W$/.test(n)); }
+    else if (/^memcpy$/.test(n)) {
+      if (ctx && typeof ctx.readGuestBytes === 'function') { try { a[1] = ctx.readGuestBytes(guestPtr(ctx, a[1]), Number(a[2]) || 0); } catch (e) { a[1] = new Uint8Array(0); } }
+    }
     else if (/^GetMessage|^PeekMessage/.test(n)) { a[0] = {}; }
     else if (/^Get(Client|Window)Rect/.test(n)) { a[1] = {}; }
     else if (/^BeginPaint/.test(n)) { a[1] = {}; }
@@ -424,7 +456,10 @@
        arguments are ordinary JavaScript numbers.  Pointer arguments that
        need guest-memory access were saved in `args` and/or replaced above,
        so normalizing the call copy here is safe. */
-    for (var ai = 0; ai < a.length; ai++) if (typeof a[ai] === 'bigint') a[ai] = Number(BigInt.asIntN(32, a[ai]));
+    /* Guest PE32+ addresses live above 4 GiB (the usual 0x140000000 image
+       base).  They are still below Number's exact integer range, so retain
+       the full value when handing scalar arguments to the host shim. */
+    for (var ai = 0; ai < a.length; ai++) if (typeof a[ai] === 'bigint') a[ai] = Number(a[ai]);
     var ret = { args: a, after: function (value) {
       if (/^GetCommandLine/.test(n) && ctx && typeof ctx.allocGuest === 'function') {
         var cmd = String(value || ''), cb = encodeGuestText(cmd, /W$/.test(n));
@@ -437,11 +472,37 @@
         try { ctx.writeGuestBytes(gp, new Uint8Array(Math.max(1, requested || 1))); } catch (e) {}
         return gp;
       }
+      if (/^(malloc|calloc)$/.test(n) && ctx && typeof ctx.allocGuest === 'function') {
+        var count = n === 'calloc' ? Number(args[0]) * Number(args[1]) : Number(args[0]), bytes = Math.max(1, count || 1);
+        var cp = ctx.allocGuest(bytes, 16);
+        self._guestAllocs[String(cp)] = { address: cp, size: bytes, cpu: ctx };
+        try { ctx.writeGuestBytes(cp, new Uint8Array(bytes)); } catch (e2) {}
+        return cp;
+      }
+      if (/^memcpy$/.test(n) && ctx && args[0] && a[1] && typeof ctx.writeGuestBytes === 'function') {
+        try { ctx.writeGuestBytes(guestPtr(ctx, args[0]), a[1].subarray ? a[1] : new Uint8Array(a[1])); } catch (e3) {}
+        return args[0];
+      }
+      if (/^(__p__|__p___)/.test(n) && ctx && typeof ctx.allocGuest === 'function') {
+        ctx._crtPtrs = ctx._crtPtrs || Object.create(null);
+        if (ctx._crtPtrs[n] != null) return ctx._crtPtrs[n];
+        var ptrSize = ctx.word || (ctx.x64 ? 8 : 4), pp = ctx.allocGuest(ptrSize, ptrSize); try { ctx.writeGuestBytes(pp, new Uint8Array(ptrSize)); } catch (e4) {}
+        ctx._crtPtrs[n] = pp; return pp;
+      }
+      if (/^free$/.test(n)) return 0;
       if (/^GetEnvironmentVariable/.test(n)) {
         /* The host API returns the required character count.  Recover the
            actual value from the runtime environment for the guest buffer. */
         var ev = text(self._env[text(a[0])] || ''), cap = Number(args[2]) || 0, ew = /W$/.test(n), eb = encodeGuestText(ev.slice(0, Math.max(0, cap - 1)), ew);
         if (args[1]) writeGuestStruct(ctx, args[1], eb); return ew ? Math.max(0, eb.length / 2 - 1) : Math.max(0, eb.length - 1);
+      }
+      if (/^(puts|fflush|setvbuf|_cexit|_crt_atexit|_initterm|_initterm_e|_set_app_type|_set_invalid_parameter_handler|_configure_narrow_argv|_initialize_narrow_environment|_set_new_mode|_configthreadlocale|__setusermatherr|signal)$/.test(n)) return value;
+      if (/^VirtualProtect/.test(n)) { if (args[3]) outCount(args[3], C.PAGE_READWRITE); return value; }
+      if (/^VirtualQuery/.test(n) && args[1]) {
+        var qb = new Uint8Array(ctx && ctx.x64 ? 48 : 28), q = a[1] || {};
+        if (ctx && ctx.x64) { writeU32(qb, 0, Number(q.BaseAddress) >>> 0); writeU32(qb, 4, Math.floor(Number(q.BaseAddress) / 0x100000000)); writeU32(qb, 8, Number(q.AllocationBase) >>> 0); writeU32(qb, 12, Math.floor(Number(q.AllocationBase) / 0x100000000)); writeU32(qb, 24, Number(q.RegionSize) >>> 0); writeU32(qb, 28, Math.floor(Number(q.RegionSize) / 0x100000000)); writeU32(qb, 32, q.State); writeU32(qb, 36, q.Protect); writeU32(qb, 40, q.Type); }
+        else { writeU32(qb, 0, q.BaseAddress); writeU32(qb, 4, q.AllocationBase); writeU32(qb, 12, q.RegionSize); writeU32(qb, 16, q.State); writeU32(qb, 20, q.Protect); writeU32(qb, 24, q.Type); }
+        writeGuestStruct(ctx, args[1], qb); return value;
       }
       if (/^GetMessage|^PeekMessage/.test(n)) {
         var m = a[0], ptr = args[0], b = new Uint8Array(24); writeU32(b, 0, m.hwnd); writeU32(b, 4, m.message); writeU32(b, 8, m.wParam); writeU32(b, 12, m.lParam); writeU32(b, 16, m.time || 0); writeGuestStruct(ctx, ptr, b);
@@ -461,9 +522,20 @@
     /* Import libraries may spell x86 stdcall names as _Foo@N.  Use the same
        canonical name for marshalling and signature lookup that `resolve`
        uses for the host export table. */
-    var n = text(name).replace(/^_/, '').replace(/@[0-9]+$/, ''), argc = SIGNATURES[n] ? SIGNATURES[n].length : (/^(GetStdHandle|GetLastError|GetTickCount|Sleep|ExitProcess|ShowWindow|UpdateWindow|GetDC|ReleaseDC|EndPaint|PostQuitMessage|DefWindowProc|DispatchMessage|TranslateMessage)$/.test(n) ? 4 : 8);
+    var raw = text(name).replace(/@[0-9]+$/, ''), n = raw;
+    /* A single leading underscore is x86 stdcall decoration, but the UCRT
+       uses meaningful single- and double-underscore export names such as
+       `_cexit` and `__p__environ`.  Preserve those CRT spellings while still
+       accepting decorated Win32 imports. */
+    if (n.charAt(0) === '_' && n.charAt(1) !== '_' && !/^_(?:cexit|configure_narrow_argv|crt_atexit|exit|initialize_narrow_environment|initterm(?:_e)?|set_(?:new_mode|app_type|invalid_parameter_handler)|configthreadlocale)$/.test(n)) n = n.slice(1);
+    var argc = (SIGNATURES[n] || SIGNATURES[raw] || SIGNATURES[n.replace(/^_/, '')]) ? (SIGNATURES[n] || SIGNATURES[raw] || SIGNATURES[n.replace(/^_/, '')]).length : (/^(GetStdHandle|GetLastError|GetTickCount|Sleep|ExitProcess|ShowWindow|UpdateWindow|GetDC|ReleaseDC|EndPaint|PostQuitMessage|DefWindowProc|DispatchMessage|TranslateMessage)$/.test(n) ? 4 : 8);
     var self = this;
-    return { argCount: argc, stackBytes: argc * 4, fn: function () {
+    /* The Win32 system DLLs use stdcall on PE32 (the callee removes its
+       arguments), while the CRT/API-set imports emitted by MinGW are cdecl
+       (the caller removes them).  PE32+ has one uniform calling convention,
+       so this only affects the 32-bit interpreter. */
+    var cdecl = /^(?:api-ms-win-crt|ucrtbase|vcruntime|msvcrt)/i.test(low(dll));
+    return { argCount: argc, stackBytes: cdecl ? 0 : argc * 4, fn: function () {
       var raw = Array.prototype.slice.call(arguments), ctx = raw.pop(), m = self._importArgs(dll, n, raw, ctx), value;
       self._cpu = ctx || self._cpu;
       value = fn.apply(self, m.args); value = m.after(value);
@@ -479,7 +551,7 @@
   var TABLES = {
     user32: ['RegisterClassExA','RegisterClassExW','CreateWindowExA','CreateWindowExW','DestroyWindow','ShowWindow','UpdateWindow','GetMessageA','GetMessageW','PeekMessageA','PeekMessageW','TranslateMessage','DispatchMessageA','DispatchMessageW','DefWindowProcA','DefWindowProcW','PostMessageA','PostMessageW','SendMessageA','SendMessageW','PostQuitMessage','SetWindowTextA','SetWindowTextW','GetWindowTextA','GetWindowTextW','GetWindowTextLengthA','GetWindowTextLengthW','GetClientRect','GetWindowRect','GetDC','GetWindowDC','ReleaseDC','BeginPaint','EndPaint','InvalidateRect','ValidateRect','MessageBoxA','MessageBoxW','GetForegroundWindow','SetForegroundWindow','GetSystemMetrics'],
     gdi32: ['CreateCompatibleDC','DeleteDC','CreateCompatibleBitmap','CreateBitmap','DeleteObject','SelectObject','CreateSolidBrush','CreateHatchBrush','CreatePen','CreateFontA','CreateFontW','GetStockObject','SetPixel','GetPixel','MoveToEx','LineTo','FillRect','PatBlt','Rectangle','TextOutA','TextOutW','GetDeviceCaps','BitBlt'],
-    kernel32: ['GetLastError','SetLastError','GetModuleHandleA','GetModuleHandleW','LoadLibraryA','LoadLibraryW','GetProcAddress','GetTickCount','GetTickCount64','Sleep','QueryPerformanceCounter','QueryPerformanceFrequency','GetStdHandle','WriteConsoleA','WriteConsoleW','ReadConsoleA','ReadConsoleW','WriteFile','ReadFile','CreateFileA','CreateFileW','CloseHandle','SetFilePointer','GetCommandLineA','GetCommandLineW','GetEnvironmentVariableA','GetEnvironmentVariableW','lstrlenA','lstrlenW','lstrcmpA','lstrcmpW','VirtualAlloc','VirtualFree','HeapAlloc','HeapFree','ExitProcess']
+    kernel32: ['GetLastError','SetLastError','InitializeCriticalSection','EnterCriticalSection','LeaveCriticalSection','DeleteCriticalSection','TlsGetValue','SetUnhandledExceptionFilter','VirtualProtect','VirtualQuery','GetModuleHandleA','GetModuleHandleW','LoadLibraryA','LoadLibraryW','GetProcAddress','GetTickCount','GetTickCount64','Sleep','QueryPerformanceCounter','QueryPerformanceFrequency','GetStdHandle','WriteConsoleA','WriteConsoleW','ReadConsoleA','ReadConsoleW','WriteFile','ReadFile','CreateFileA','CreateFileW','CloseHandle','SetFilePointer','GetCommandLineA','GetCommandLineW','GetEnvironmentVariableA','GetEnvironmentVariableW','lstrlenA','lstrlenW','lstrcmpA','lstrcmpW','VirtualAlloc','VirtualFree','HeapAlloc','HeapFree','ExitProcess','__p__environ','__p___argc','__p___argv','_set_new_mode','_configthreadlocale','__setusermatherr','__C_specific_handler','_cexit','_configure_narrow_argv','_crt_atexit','_exit','_initialize_narrow_environment','_initterm','_initterm_e','_set_app_type','_set_invalid_parameter_handler','abort','exit','signal','__acrt_iob_func','__p__commode','__p__fmode','__stdio_common_vfprintf','fflush','setvbuf','puts','strlen','strncmp','malloc','calloc','free','memcpy']
   };
   var SIGNATURES = {
     RegisterClassExA: ['spec'], RegisterClassExW: ['spec'], RegisterClassA: ['spec'], RegisterClassW: ['spec'], UnregisterClassA: ['className','instance'], UnregisterClassW: ['className','instance'],
@@ -507,12 +579,13 @@
     GetDeviceCaps: ['hdc','index'],
     BitBlt: ['destDC','x','y','width','height','srcDC','srcX','srcY','rop'],
     TextOutA: ['dc','x','y','text'], TextOutW: ['dc','x','y','text'], FillRect: ['dc','rect','brush'],
-    GetLastError: [], SetLastError: ['error'], GetModuleHandleA: ['name'], GetModuleHandleW: ['name'], LoadLibraryA: ['name'], LoadLibraryW: ['name'], GetProcAddress: ['module','name'],
+    GetLastError: [], SetLastError: ['error'], InitializeCriticalSection: ['section'], EnterCriticalSection: ['section'], LeaveCriticalSection: ['section'], DeleteCriticalSection: ['section'], TlsGetValue: ['index'], SetUnhandledExceptionFilter: ['handler'], VirtualProtect: ['address','size','protect','oldProtect'], VirtualQuery: ['address','info','length'], GetModuleHandleA: ['name'], GetModuleHandleW: ['name'], LoadLibraryA: ['name'], LoadLibraryW: ['name'], GetProcAddress: ['module','name'],
     GetTickCount: [], GetTickCount64: [], Sleep: ['milliseconds'], QueryPerformanceCounter: ['value'], QueryPerformanceFrequency: ['value'], GetStdHandle: ['which'],
     WriteConsoleA: ['handle','buffer','chars','written'], WriteConsoleW: ['handle','buffer','chars','written'], ReadConsoleA: ['handle','buffer','chars','read'], ReadConsoleW: ['handle','buffer','chars','read'],
     WriteFile: ['handle','buffer','bytes','written'], ReadFile: ['handle','buffer','bytes','read'], CreateFileA: ['path','access','share','security','creation','flags','template'], CreateFileW: ['path','access','share','security','creation','flags','template'],
     CloseHandle: ['handle'], SetFilePointer: ['handle','distance','high','method'], GetCommandLineA: [], GetCommandLineW: [], GetEnvironmentVariableA: ['name','buffer','capacity'], GetEnvironmentVariableW: ['name','buffer','capacity'],
-    lstrlenA: ['string'], lstrlenW: ['string'], lstrcmpA: ['a','b'], lstrcmpW: ['a','b'], VirtualAlloc: ['address','bytes','type','protect'], VirtualFree: ['address','bytes','type'], HeapAlloc: ['heap','flags','bytes'], HeapFree: ['heap','flags','address'], ExitProcess: ['code']
+    lstrlenA: ['string'], lstrlenW: ['string'], lstrcmpA: ['a','b'], lstrcmpW: ['a','b'], VirtualAlloc: ['address','bytes','type','protect'], VirtualFree: ['address','bytes','type'], HeapAlloc: ['heap','flags','bytes'], HeapFree: ['heap','flags','address'], ExitProcess: ['code'],
+    __p__environ: [], __p___argc: [], __p___argv: [], _set_new_mode: ['mode'], _configthreadlocale: ['mode'], __setusermatherr: ['handler'], __C_specific_handler: ['record','frame','context','dispatcher'], _cexit: [], _configure_narrow_argv: ['mode'], _crt_atexit: ['function'], _exit: ['code'], _initialize_narrow_environment: [], _initterm: ['first','last'], _initterm_e: ['first','last'], _set_app_type: ['type'], _set_invalid_parameter_handler: ['handler'], abort: [], exit: ['code'], signal: ['signal','handler'], __acrt_iob_func: ['which'], __p__commode: [], __p__fmode: [], __stdio_common_vfprintf: ['options','stream','format','locale','args'], fflush: ['stream'], setvbuf: ['stream','buffer','mode','size'], puts: ['string'], strlen: ['string'], strncmp: ['a','b','count'], malloc: ['size'], calloc: ['count','size'], free: ['memory'], memcpy: ['destination','source','size']
   };
   var API = {
     version: '1.0', constants: C, tables: TABLES, signatures: SIGNATURES,

@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import {
-  pe32Console, pe64Console, pe32WithUser32Import,
-  pe32WithRelocation, pe64WithRelocation,
+  pe32Console, pe64Console, pe32WithUser32Import, pe32WithApiSetImport,
+  pe32WithRelocation, pe64WithRelocation, pe64WithApiSetImport,
 } from './pe_fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -92,6 +92,33 @@ importedCall.image.set([0xff, 0x15, iatVA & 255, (iatVA >>> 8) & 255, (iatVA >>>
 assert.equal(importedCall.run({ maxSteps: 16 }).exitCode, 42, 'x86 absolute IAT call executes');
 const importedHost = parse(pe32WithUser32Import(), { resolveImport: (dll, name) => rtForImports.resolve(dll, name) });
 assert.equal(typeof importedHost.imports[0].host, 'function');
+
+/* PE32+ API-set imports are the form produced by current MinGW/UCRT builds.
+   Verify that the resolver aliases the API-set DLL to its CRT bridge and that
+   a RIP-relative call through the 64-bit IAT returns to the guest. */
+const apiSetRuntime = Win32.createRuntime();
+const apiSet = parse(pe64WithApiSetImport(), {
+  resolveImport: (dll, name) => apiSetRuntime.resolveImport(dll, name),
+});
+assert.equal(apiSet.arch, 'x86_64');
+assert.equal(apiSet.imports[0].dll.toLowerCase(), 'api-ms-win-crt-stdio-l1-1-0.dll');
+assert.equal(apiSet.imports[0].name, 'puts');
+assert.ok(apiSet.imports[0].host, 'API-set import resolves through the CRT bridge');
+const apiRun = apiSet.run({ maxSteps: 32 });
+assert.equal(apiRun.status, 'exited');
+assert.equal(apiRun.exitCode, 42);
+assert.equal(apiSetRuntime.consoleText(), '\n');
+apiSetRuntime.destroy();
+
+const apiSet32Runtime = Win32.createRuntime();
+const apiSet32 = parse(pe32WithApiSetImport(), {
+  resolveImport: (dll, name) => apiSet32Runtime.resolveImport(dll, name),
+});
+assert.equal(apiSet32.arch, 'x86');
+assert.equal(apiSet32.imports[0].dll.toLowerCase(), 'api-ms-win-crt-stdio-l1-1-0.dll');
+assert.equal(apiSet32.run({ maxSteps: 32 }).status, 'exited');
+assert.equal(apiSet32Runtime.consoleText(), '\n');
+apiSet32Runtime.destroy();
 
 /* A relocation entry is applied only when a non-preferred load base is used. */
 const r32 = parse(pe32WithRelocation());

@@ -73,10 +73,14 @@ function basePE({ pe64 = false, imports = false, relocations = false } = {}) {
     if (relocations) { w32(b, opt + 136, 0x3000); w32(b, opt + 140, 0x100); }
   }
 
-  /* .text: mov eax,42; ret (valid in both x86 and x86_64). */
+  /* .text: return 42.  The imported x64 fixture also makes a direct
+     RIP-relative call through its IAT before returning, which exercises the
+     same PE32+ import path used by dynamically linked MinGW programs. */
   ascii(b, sect, '.text'); w32(b, sect + 8, 0x200); w32(b, sect + 12, 0x1000);
   w32(b, sect + 16, 0x200); w32(b, sect + 20, 0x200); w32(b, sect + 36, 0x60000020);
-  b.set([0xb8, 42, 0, 0, 0, 0xc3], 0x200);
+  if (pe64 && imports) b.set([0x31, 0xc9, 0xff, 0x15, 0x48, 0x10, 0x00, 0x00, 0xb8, 42, 0, 0, 0, 0xc3], 0x200);
+  else if (imports) b.set([0x31, 0xc9, 0xff, 0x15, 0x48, 0x20, 0x40, 0x00, 0xb8, 42, 0, 0, 0, 0xc3], 0x200);
+  else b.set([0xb8, 42, 0, 0, 0, 0xc3], 0x200);
 
   if (relocations) {
     const rs = sect + (imports ? 80 : 40);
@@ -95,9 +99,14 @@ function basePE({ pe64 = false, imports = false, relocations = false } = {}) {
     /* IMAGE_IMPORT_DESCRIPTOR at RVA 0x2000 (raw 0x400). */
     w32(b, 0x400, 0x2040);             // OriginalFirstThunk
     w32(b, 0x40c, 0x2060);             // Name
-    w32(b, 0x410, 0x2048);             // FirstThunk
-    w32(b, 0x440, 0x2080); w32(b, 0x448, 0);
-    w32(b, 0x448, 0x2080); w32(b, 0x450, 0);
+    w32(b, 0x410, pe64 ? 0x2050 : 0x2048); // FirstThunk
+    if (pe64) {
+      w64(b, 0x440, 0x2080n); w64(b, 0x448, 0n);
+      w64(b, 0x450, 0x2080n); w64(b, 0x458, 0n);
+    } else {
+      w32(b, 0x440, 0x2080); w32(b, 0x448, 0);
+      w32(b, 0x448, 0x2080); w32(b, 0x450, 0);
+    }
     ascii(b, 0x460, 'user32.dll');
     w16(b, 0x480, 0); ascii(b, 0x482, 'CreateWindowExA');
   }
@@ -107,6 +116,33 @@ function basePE({ pe64 = false, imports = false, relocations = false } = {}) {
 export function pe32Console() { return basePE({ pe64: false, imports: false }); }
 export function pe64Console() { return basePE({ pe64: true, imports: false }); }
 export function pe32WithUser32Import() { return basePE({ pe64: false, imports: true }); }
+export function pe32WithApiSetImport() {
+  const b = basePE({ pe64: false, imports: true });
+  const rawName = 0x460;
+  for (let i = 0; i < 'api-ms-win-crt-stdio-l1-1-0.dll'.length; i++) b[rawName + i] = 'api-ms-win-crt-stdio-l1-1-0.dll'.charCodeAt(i);
+  b[rawName + 'api-ms-win-crt-stdio-l1-1-0.dll'.length] = 0;
+  w32(b, 0x440, 0x20a0); w32(b, 0x448, 0x20a0);
+  const symbol = 'puts';
+  for (let i = 0; i < symbol.length; i++) b[0x4a2 + i] = symbol.charCodeAt(i);
+  b[0x4a2 + symbol.length] = 0;
+  return b;
+}
+export function pe64WithApiSetImport() {
+  const b = basePE({ pe64: true, imports: true });
+  /* Keep the fixture independent of a host Windows installation while using
+     the API-set spelling emitted by the UCRT import libraries. */
+  const rawName = 0x460;
+  for (let i = 0; i < 'api-ms-win-crt-stdio-l1-1-0.dll'.length; i++) b[rawName + i] = 'api-ms-win-crt-stdio-l1-1-0.dll'.charCodeAt(i);
+  b[rawName + 'api-ms-win-crt-stdio-l1-1-0.dll'.length] = 0;
+  /* The longer API-set DLL name reaches past the compact fixture's original
+     hint/name slot, so move that slot to the end of .idata and repoint both
+     PE32+ thunk entries. */
+  w64(b, 0x440, 0x20a0n); w64(b, 0x450, 0x20a0n);
+  const symbol = 'puts';
+  for (let i = 0; i < symbol.length; i++) b[0x4a2 + i] = symbol.charCodeAt(i);
+  b[0x4a2 + symbol.length] = 0;
+  return b;
+}
 export function pe32WithRelocation() { return basePE({ pe64: false, relocations: true }); }
 export function pe64WithRelocation() { return basePE({ pe64: true, relocations: true }); }
 

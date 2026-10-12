@@ -86,9 +86,16 @@ marshalling.
 `pe-loader.js` is loaded after `win32-api.js` and exposes `W98PE` plus
 `W98.PE`. `W98PE.parse/load` accepts an `ArrayBuffer` or `Uint8Array`, maps
 PE32/PE32+ sections, applies HIGHLOW/DIR64 relocations, and resolves imports
-through an explicit callback or `W98Win32`. `W98PE.runConsole` and `runGui`
-execute bounded x86/x86_64 images; `runPath` reads a guest filesystem path.
-The interpreter returns a deterministic status (`exited`, `step_limit`, or
-`unsupported_instruction`) so the shell can report unsupported binaries without
-bringing down the desktop. `pe-loader.js` must remain before `desk.js`; callers
-should keep arbitrary host bytes behind the explicit file picker.
+through an explicit callback or `W98Win32`. The bridge aliases the UCRT import
+API-set DLLs (`api-ms-win-crt-*`) and the common `ucrtbase`, `vcruntime140`,
+and `msvcrt` names to deterministic CRT shims. This covers the MinGW startup
+path used by ordinary dynamically linked console programs, including x86/x64
+TLS/TEB reads, import thunks, heap/string helpers, and console output; GUI
+programs continue through the same user32/gdi32 surface.
+
+`W98PE.runConsole` and `runGui` execute bounded x86/x86_64 images, while
+`runPath` reads a guest filesystem path. The interpreter returns a deterministic
+status (`exited`, `step_limit`, or `unsupported_instruction`) so the shell can
+report unsupported binaries without bringing down the desktop. `pe-loader.js`
+must remain before `desk.js`; callers should keep arbitrary host bytes behind
+the explicit file picker.
